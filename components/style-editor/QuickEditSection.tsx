@@ -15,6 +15,7 @@ type Props = {
   qcBorderColor: string;
   setQcBorderColor: (v: string) => void;
   applyInlineStyle: (prop: string, value: string) => void;
+  onClose?: () => void;
 };
 
 const QuickEditSection: React.FC<Props> = ({
@@ -28,10 +29,21 @@ const QuickEditSection: React.FC<Props> = ({
   qcBorderColor,
   setQcBorderColor,
   applyInlineStyle,
+  onClose,
 }) => {
   return (
     <div>
-      <div className="text-xs font-semibold text-slate-200/80 mb-3">Quick edit</div>
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-xs font-semibold text-slate-200/80">Quick edit</div>
+        {onClose && (
+          <button
+            className="text-white/80 hover:text-white text-lg leading-none rounded-md p-2 hover:bg-white/5 transition"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        )}
+      </div>
       {/* Text content */}
       <div className="mb-4">
         <div className="text-[11px] text-slate-400 mb-1">Text content</div>

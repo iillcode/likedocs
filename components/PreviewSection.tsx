@@ -1,6 +1,24 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import {
+  Square,
+  Pilcrow,
+  Heading1,
+  Heading2,
+  Heading3,
+  Link as LinkIcon,
+  List as ListIcon,
+  Image as ImageIcon,
+  TextCursorInput,
+  Menu as MenuIcon,
+  FileText,
+  Braces,
+  LayoutDashboard,
+  MousePointer,
+  Download,
+} from "lucide-react";
+
 import DOMPurify from "dompurify";
 import StyleEditorPanel from "./StyleEditorPanel";
 import DomTree from "./DomTree";
@@ -125,15 +143,32 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   // Quick text edit
   const [qcText, setQcText] = useState<string>("");
   const quickTextTargetRef = useRef<HTMLElement | null>(null);
+  // ======== Device preview state ========
+  const [devicePreset, setDevicePreset] = useState<
+    "desktop" | "tablet" | "mobile" | "responsive"
+  >("desktop");
+  const [frameWidth, setFrameWidth] = useState<number>(1200);
+  const [frameHeight, setFrameHeight] = useState<number>(800);
+  const [autoMobileCss, setAutoMobileCss] = useState<boolean>(false);
+
   // Media query editor state
   const [mqMinWidth, setMqMinWidth] = useState<string>("");
   const [mqProp, setMqProp] = useState<string>("");
   const [mqVal, setMqVal] = useState<string>("");
   const [mqRules, setMqRules] = useState<
-    Array<{ id: string; label: string; min: number | null; prop: string; value: string }>
+    Array<{
+      id: string;
+      label: string;
+      min: number | null;
+      prop: string;
+      value: string;
+    }>
   >([]);
   const mqAllRulesRef = useRef<
-    Record<string, Array<{ id: string; min: number | null; prop: string; value: string }>>
+    Record<
+      string,
+      Array<{ id: string; min: number | null; prop: string; value: string }>
+    >
   >({});
   const mqRuleIdRef = useRef<number>(1);
   // Insert modal state
@@ -162,6 +197,52 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     "input",
     "textarea",
   ];
+  // Icon mapping (match DomTree)
+  const iconSizeCls = "w-3.5 h-3.5";
+  const getIconForTag = (tag: string) => {
+    switch (tag) {
+      case "div":
+        return <Square className={iconSizeCls} />;
+      case "section":
+      case "article":
+      case "main":
+      case "aside":
+      case "header":
+      case "footer":
+        return <LayoutDashboard className={iconSizeCls} />;
+      case "p":
+        return <Pilcrow className={iconSizeCls} />;
+      case "h1":
+        return <Heading1 className={iconSizeCls} />;
+      case "h2":
+        return <Heading2 className={iconSizeCls} />;
+      case "h3":
+        return <Heading3 className={iconSizeCls} />;
+      case "span":
+        return <Braces className={iconSizeCls} />;
+      case "a":
+        return <LinkIcon className={iconSizeCls} />;
+      case "button":
+        return <MousePointer className={iconSizeCls} />;
+      case "ul":
+      case "ol":
+        return <ListIcon className={iconSizeCls} />;
+      case "li":
+        return <ListIcon className={iconSizeCls} />;
+      case "img":
+        return <ImageIcon className={iconSizeCls} />;
+      case "input":
+      case "textarea":
+        return <TextCursorInput className={iconSizeCls} />;
+      case "nav":
+        return <MenuIcon className={iconSizeCls} />;
+      case "form":
+        return <FileText className={iconSizeCls} />;
+      default:
+        return <Square className={iconSizeCls} />;
+    }
+  };
+
   // Prevent iframe reload on internal updates
   const internalUpdateRef = useRef<boolean>(false);
   // Context menu state for tree right-click
@@ -242,7 +323,12 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       const el = frameRef.current;
       if (!el) return false;
       const r = el.getBoundingClientRect();
-      return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+      return (
+        clientX >= r.left &&
+        clientX <= r.right &&
+        clientY >= r.top &&
+        clientY <= r.bottom
+      );
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -273,14 +359,18 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       if (isInsideFrame(e.clientX, e.clientY)) return;
       isPanningRef.current = true;
       lastPointRef.current = { x: e.clientX, y: e.clientY };
-      try { (e.target as Element).setPointerCapture?.(e.pointerId); } catch {}
+      try {
+        (e.target as Element).setPointerCapture?.(e.pointerId);
+      } catch {}
     };
     const onPointerMove = (e: PointerEvent) => {
       if (!isPanningRef.current) return;
       // If pointer enters the preview frame mid-drag, stop panning (gate interactions)
       if (isInsideFrame(e.clientX, e.clientY)) {
         isPanningRef.current = false;
-        try { (e.target as Element).releasePointerCapture?.(e.pointerId); } catch {}
+        try {
+          (e.target as Element).releasePointerCapture?.(e.pointerId);
+        } catch {}
         return;
       }
       const dx = e.clientX - lastPointRef.current.x;
@@ -295,14 +385,24 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     };
     const onPointerUp = (e: PointerEvent) => {
       isPanningRef.current = false;
-      try { (e.target as Element).releasePointerCapture?.(e.pointerId); } catch {}
+      try {
+        (e.target as Element).releasePointerCapture?.(e.pointerId);
+      } catch {}
     };
 
     // Initialize transform (center-ish)
     try {
       const rect = ws.getBoundingClientRect();
-      translateRef.current = { x: rect.width * 0.5 - 600, y: rect.height * 0.5 - 400 };
-      scaleRef.current = 0.9;
+      // Slightly reduced initial scale
+      const initialScale = 0.8;
+      // Center the scaled frame in the available workspace viewport
+      const scaledW = frameWidth * initialScale;
+      const scaledH = frameHeight * initialScale;
+      scaleRef.current = initialScale;
+      translateRef.current = {
+        x: (rect.width - scaledW) / 2,
+        y: (rect.height - scaledH) / 2,
+      };
       if (canvasRef.current) {
         canvasRef.current.style.transformOrigin = "0 0";
         canvasRef.current.style.willChange = "transform";
@@ -310,7 +410,9 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       requestAnimationFrame(applyTransform);
     } catch {}
 
-    ws.addEventListener("wheel", onWheel, { passive: false } as AddEventListenerOptions);
+    ws.addEventListener("wheel", onWheel, {
+      passive: false,
+    } as AddEventListenerOptions);
     ws.addEventListener("pointerdown", onPointerDown as any, true);
     window.addEventListener("pointermove", onPointerMove as any, true);
     window.addEventListener("pointerup", onPointerUp as any, true);
@@ -338,6 +440,14 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
         iframeDoc.write(sanitizedHTML);
         iframeDoc.close();
 
+        // Ensure a proper mobile viewport and optional auto CSS for responsiveness
+        try {
+          ensureViewportMeta(iframeDoc);
+        } catch {}
+        try {
+          setAutoMobileCssInDoc(iframeDoc, autoMobileCss);
+        } catch {}
+
         // Add editing functionality after the content loads
         setTimeout(() => {
           addEditingListeners(iframeDoc);
@@ -348,14 +458,16 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
           // Install a mutation observer to update the DOM tree when content changes
           try {
             const win = iframeDoc.defaultView as Window;
-            const MutationObs = (win as any).MutationObserver || MutationObserver;
+            const MutationObs =
+              (win as any).MutationObserver || MutationObserver;
             const observer = new MutationObs((mutations: MutationRecord[]) => {
               // Skip pure overlay mutations, but respond when at least one non-overlay mutation exists
               const hasNonOverlayMutation = mutations.some((m) => {
                 const node = m.target as Node;
-                const el = (node.nodeType === Node.TEXT_NODE
-                  ? (node.parentElement as HTMLElement | null)
-                  : (node as HTMLElement | null));
+                const el =
+                  node.nodeType === Node.TEXT_NODE
+                    ? (node.parentElement as HTMLElement | null)
+                    : (node as HTMLElement | null);
                 if (!el) return true; // treat unknown as real change
                 const isOverlay =
                   el.hasAttribute?.("data-likedocs-overlay") ||
@@ -389,6 +501,78 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       }
     }
   }, [sanitizedHTML]);
+
+  // Update frame dimensions based on preset
+  useEffect(() => {
+    if (devicePreset === "desktop") {
+      setFrameWidth(1200);
+      setFrameHeight(800);
+    } else if (devicePreset === "tablet") {
+      setFrameWidth(768);
+      setFrameHeight(1024);
+    } else if (devicePreset === "mobile") {
+      setFrameWidth(390);
+      setFrameHeight(844);
+    } // responsive keeps whatever user sets via inputs
+    // Reposition overlay when size changes
+    try {
+      repositionSelectedOverlay();
+    } catch {}
+  }, [devicePreset]);
+
+  // Reposition overlay and refresh computed styles when frame size changes
+  useEffect(() => {
+    try {
+      repositionSelectedOverlay();
+      const el = styleTargetRef.current;
+      if (el) refreshComputedStyles(el);
+    } catch {}
+  }, [frameWidth, frameHeight]);
+
+  // Toggle Auto Mobile CSS within current iframe document
+  useEffect(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    try {
+      setAutoMobileCssInDoc(doc, autoMobileCss);
+    } catch {}
+  }, [autoMobileCss]);
+
+  // ======== Mobile preview helpers ========
+  const ensureViewportMeta = (doc: Document) => {
+    const head =
+      doc.head || doc.getElementsByTagName("head")[0] || doc.documentElement;
+    let meta = head.querySelector(
+      'meta[name="viewport"]'
+    ) as HTMLMetaElement | null;
+    if (!meta) {
+      meta = doc.createElement("meta");
+      meta.setAttribute("name", "viewport");
+      head.appendChild(meta);
+    }
+    meta.setAttribute("content", "width=device-width, initial-scale=1");
+  };
+
+  const AUTO_MOBILE_CSS = `*{box-sizing:border-box}img,svg,video,canvas{max-width:100%;height:auto}iframe{max-width:100%}figure{max-width:100%}table{width:100%;display:block;overflow:auto}pre,code{white-space:pre-wrap;word-break:break-word}@media(max-width:768px){.container,main,section,article,header,footer,nav{padding:0 16px!important}.row{flex-direction:column!important}[style*="width:"]{width:100%!important;max-width:100%!important}}`;
+
+  const setAutoMobileCssInDoc = (doc: Document, enabled: boolean) => {
+    const head =
+      doc.head || doc.getElementsByTagName("head")[0] || doc.documentElement;
+    const id = "likedocs-auto-mobile-css";
+    let styleEl = head.querySelector(`#${id}`) as HTMLStyleElement | null;
+    if (enabled) {
+      if (!styleEl) {
+        styleEl = doc.createElement("style");
+        styleEl.id = id;
+        head.appendChild(styleEl);
+      }
+      styleEl.textContent = AUTO_MOBILE_CSS;
+    } else if (styleEl) {
+      try {
+        styleEl.parentElement?.removeChild(styleEl);
+      } catch {}
+    }
+  };
 
   // Helpers for delete/clear inline styles
   const deleteElementAndRefresh = (el: HTMLElement | null) => {
@@ -573,22 +757,11 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
           const headings = ["h1", "h2", "h3", "h4", "h5", "h6"];
           if (headings.includes(tag)) {
             (el as HTMLElement).textContent = `${tag.toUpperCase()} heading`;
-          } else if (
-            [
-              "p",
-              "span",
-              "div",
-              "li",
-              "section",
-              "header",
-              "footer",
-              "nav",
-              "main",
-              "article",
-              "aside",
-            ].includes(tag)
-          ) {
-            (el as HTMLElement).textContent = `New ${tag}`;
+          }
+          // Do not auto-insert placeholder text for layout/container tags.
+          // Keep optional default text only for 'li' to make list items visible.
+          if (tag === "li") {
+            (el as HTMLElement).textContent = "New item";
           }
         }
       }
@@ -611,7 +784,7 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
 
   const handleTreeDropOn = (
     targetEl: HTMLElement,
-    position: "before" | "after"
+    position: "before" | "after" | "inside"
   ) => {
     const src = dragSourceRef.current;
     if (!src) return;
@@ -625,15 +798,17 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       dragSourceRef.current = null;
       return;
     }
-    // Must be sibling-only reordering
     const parentA = src.parentElement;
     const parentB = targetEl.parentElement;
-    if (!parentA || parentA !== parentB) {
-      dragSourceRef.current = null;
-      return;
-    }
-    // Prevent moving a parent into its own descendant (shouldn't happen for siblings, but safe-guard)
-    if (src.contains(targetEl)) {
+    const isSiblingMove = position === "before" || position === "after";
+    const validSibling =
+      isSiblingMove &&
+      !!parentA &&
+      parentA === parentB &&
+      !src.contains(targetEl);
+    const validInside =
+      position === "inside" && src !== targetEl && !src.contains(targetEl);
+    if (!validSibling && !validInside) {
       dragSourceRef.current = null;
       return;
     }
@@ -644,10 +819,15 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       redoStackRef.current = [];
     } catch {}
     try {
-      if (position === "before") {
-        parentA.insertBefore(src, targetEl);
-      } else {
-        parentA.insertBefore(src, targetEl.nextSibling);
+      if (position === "inside") {
+        // Append as last child of target container
+        targetEl.appendChild(src);
+      } else if (parentA) {
+        if (position === "before") {
+          parentA.insertBefore(src, targetEl);
+        } else {
+          parentA.insertBefore(src, targetEl.nextSibling);
+        }
       }
     } catch {}
     // Update code and rebuild tree
@@ -664,12 +844,32 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     const iframeDoc =
       iframe?.contentDocument || iframe?.contentWindow?.document;
     if (!iframeDoc) return;
+    // Disconnect any prior MutationObserver tied to the old document
+    try {
+      mutationObserverRef.current?.disconnect?.();
+      mutationObserverRef.current = null;
+    } catch {}
+    // Write new content into the iframe document
     try {
       iframeDoc.open();
       iframeDoc.write(html);
       iframeDoc.close();
     } catch {}
-    // reinitialize listeners and tree
+    // After replacing document content, reset overlay refs to avoid stale nodes
+    hoverOverlayRef.current = null;
+    selectOverlayRef.current = null;
+    // Ensure viewport meta and optional auto mobile CSS after any write
+    try {
+      ensureViewportMeta(iframeDoc);
+    } catch {}
+    try {
+      setAutoMobileCssInDoc(iframeDoc, autoMobileCss);
+    } catch {}
+    // Recreate overlays for the new document so event handlers have valid refs
+    try {
+      ensureOverlays(iframeDoc);
+    } catch {}
+    // Reinitialize listeners and DOM tree
     setTimeout(() => {
       try {
         addEditingListeners(iframeDoc);
@@ -677,8 +877,12 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       try {
         refreshDomTreeFromDoc(iframeDoc);
       } catch {}
+      // Reapply any existing MQ stylesheet to the new document
+      try {
+        rebuildMqStyleSheet();
+      } catch {}
     }, 50);
-    // propagate to code without reloading iframe again
+    // Propagate to code without triggering an external reload
     internalUpdateRef.current = true;
     setCurrentHtml(html);
     onCodeUpdate(html);
@@ -858,7 +1062,9 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
 
   // ========= Media query stylesheet helpers =========
   const ensureMqStyleElement = (doc: Document): HTMLStyleElement => {
-    let style = doc.getElementById("likedocs-mq-style") as HTMLStyleElement | null;
+    let style = doc.getElementById(
+      "likedocs-mq-style"
+    ) as HTMLStyleElement | null;
     if (!style) {
       style = doc.createElement("style");
       style.id = "likedocs-mq-style";
@@ -870,7 +1076,9 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   const ensureElementKey = (el: HTMLElement): string => {
     let key = el.getAttribute("data-likedocs-id");
     if (!key) {
-      key = `el_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      key = `el_${Date.now().toString(36)}_${Math.random()
+        .toString(36)
+        .slice(2, 7)}`;
       el.setAttribute("data-likedocs-id", key);
     }
     return key;
@@ -902,8 +1110,7 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       min: r.min,
       prop: r.prop,
       value: r.value,
-      label:
-        (r.min ? `≥${r.min}px` : "All") + " — " + `${r.prop}: ${r.value}`,
+      label: (r.min ? `≥${r.min}px` : "All") + " — " + `${r.prop}: ${r.value}`,
     }));
     setMqRules(list);
   };
@@ -914,13 +1121,20 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     const key = ensureElementKey(el);
     const minNum = min.trim() === "" ? null : Number.parseInt(min, 10);
     const id = `r${mqRuleIdRef.current++}`;
-    const entry = { id, min: (minNum ?? null), prop: prop.trim(), value: value.trim() };
+    const entry = {
+      id,
+      min: minNum ?? null,
+      prop: prop.trim(),
+      value: value.trim(),
+    };
     if (!mqAllRulesRef.current[key]) mqAllRulesRef.current[key] = [];
     mqAllRulesRef.current[key].push(entry);
     rebuildMqStyleSheet();
     updateMqRulesListFor(el);
     // reposition overlay in case style change affects size
-    try { repositionSelectedOverlay(); } catch {}
+    try {
+      repositionSelectedOverlay();
+    } catch {}
   };
 
   const onDeleteMqProp = (id: string) => {
@@ -931,7 +1145,9 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     mqAllRulesRef.current[key] = arr.filter((r) => r.id !== id);
     rebuildMqStyleSheet();
     updateMqRulesListFor(el);
-    try { repositionSelectedOverlay(); } catch {}
+    try {
+      repositionSelectedOverlay();
+    } catch {}
   };
 
   // ========= Overlay helpers =========
@@ -1209,7 +1425,8 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       if (!t || !(t instanceof win.HTMLElement)) return;
       // Click on document root or body selects the top container (body) with toggle behavior
       if (t === doc.documentElement || t === doc.body) {
-        const bodyEl = (doc.body as HTMLElement) || (doc.documentElement as HTMLElement);
+        const bodyEl =
+          (doc.body as HTMLElement) || (doc.documentElement as HTMLElement);
         if (styleTargetRef.current === bodyEl) {
           clearSelection();
         } else {
@@ -1280,7 +1497,11 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     doc.addEventListener("keydown", onKeyDown as any, true);
     win.addEventListener("scroll", onScroll, true);
     win.addEventListener("resize", onResize, true);
-    doc.addEventListener("wheel", onWheel as any, { capture: true } as AddEventListenerOptions);
+    doc.addEventListener(
+      "wheel",
+      onWheel as any,
+      { capture: true } as AddEventListenerOptions
+    );
   };
 
   // Hide selection overlay when panel closes
@@ -1448,28 +1669,264 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative h-screen w-screen bg-gray-950 flex"
+      className="relative h-screen w-screen bg-gray-950 flex flex-col"
     >
-      {/* Left DOM Tree Sidebar (static attached) */}
-      <DomTree
-        tree={domTree}
-        expandedKeys={expandedKeys}
-        onToggle={(key) => {
-          setExpandedKeys((prev) => {
-            const next = new Set(prev);
-            if (next.has(key)) next.delete(key);
-            else next.add(key);
-            return next;
-          });
-        }}
-        onSelect={(el) => openStylePanelFor(el)}
-        selectedEl={styleTargetRef.current}
-        onRequestInsert={openInsertModal}
-        onContextMenu={(el, x, y) => openContextMenu(el, x, y)}
-        onDragStart={handleTreeDragStart}
-        onDragEnd={handleTreeDragEnd}
-        onDrop={(el, pos) => handleTreeDropOn(el, pos)}
-      />
+      {/* Global header (full-width) */}
+      <div className="h-12 shrink-0 z-[125] border-b border-white/10 bg-[#0e0e0e]">
+        <div className="h-full px-4 flex items-center justify-between">
+          {/* Left: brand */}
+          <div className="flex items-center gap-2">
+            <img src="/file.svg" alt="Logo" className="w-5 h-5" />
+            <span className="text-sm font-semibold text-gray-100">
+              LikeDocs
+            </span>
+          </div>
+          {/* Middle: device toolbar */}
+          <div className="flex items-center gap-3 text-[11px] text-gray-100">
+            <div className="flex gap-1">
+              <button
+                className={`px-2 py-1 rounded ${
+                  devicePreset === "desktop"
+                    ? "bg-white/10"
+                    : "hover:bg-white/10"
+                }`}
+                onClick={() => setDevicePreset("desktop")}
+                title="Desktop 1200×800"
+              >
+                Desktop
+              </button>
+              <button
+                className={`px-2 py-1 rounded ${
+                  devicePreset === "tablet"
+                    ? "bg-white/10"
+                    : "hover:bg-white/10"
+                }`}
+                onClick={() => setDevicePreset("tablet")}
+                title="Tablet 768×1024"
+              >
+                Tablet
+              </button>
+              <button
+                className={`px-2 py-1 rounded ${
+                  devicePreset === "mobile"
+                    ? "bg-white/10"
+                    : "hover:bg-white/10"
+                }`}
+                onClick={() => setDevicePreset("mobile")}
+                title="Mobile 390×844"
+              >
+                Mobile
+              </button>
+              <button
+                className={`px-2 py-1 rounded ${
+                  devicePreset === "responsive"
+                    ? "bg-white/10"
+                    : "hover:bg-white/10"
+                }`}
+                onClick={() => setDevicePreset("responsive")}
+                title="Responsive (custom)"
+              >
+                Responsive
+              </button>
+            </div>
+            {devicePreset === "responsive" && (
+              <div className="flex items-center gap-1 ml-2">
+                <label className="opacity-70">W</label>
+                <input
+                  type="number"
+                  min={240}
+                  value={frameWidth}
+                  onChange={(e) =>
+                    setFrameWidth(
+                      Number.parseInt(e.target.value || "0", 10) || 0
+                    )
+                  }
+                  className="w-16 bg-transparent border border-white/10 rounded px-1 py-0.5 focus:outline-none"
+                />
+                <label className="opacity-70">H</label>
+                <input
+                  type="number"
+                  min={240}
+                  value={frameHeight}
+                  onChange={(e) =>
+                    setFrameHeight(
+                      Number.parseInt(e.target.value || "0", 10) || 0
+                    )
+                  }
+                  className="w-16 bg-transparent border border-white/10 rounded px-1 py-0.5 focus:outline-none"
+                />
+              </div>
+            )}
+            <div className="pl-2 ml-2 border-l border-white/10 flex items-center gap-1">
+              <label className="opacity-70">Auto CSS</label>
+              <button
+                className={`px-2 py-1 rounded ${
+                  autoMobileCss ? "bg-white/10" : "hover:bg-white/10"
+                }`}
+                onClick={() => setAutoMobileCss((v) => !v)}
+                title="Inject minimal responsive CSS for narrow widths"
+              >
+                {autoMobileCss ? "On" : "Off"}
+              </button>
+            </div>
+          </div>
+          {/* Right: Export */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExport}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-white/10 bg-[#111] text-xs text-gray-100 hover:bg-white/10"
+              title="Export HTML file"
+            >
+              <Download className="w-4 h-4" />
+              <span>Export</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Main row under header: DOM tree (left) + canvas (center) + style panel (right) */}
+      <div className="flex-1 min-h-0 flex overflow-hidden">
+        {/* Left DOM Tree Sidebar */}
+        <DomTree
+          tree={domTree}
+          expandedKeys={expandedKeys}
+          onToggle={(key) => {
+            setExpandedKeys((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              return next;
+            });
+          }}
+          onSelect={(el) => openStylePanelFor(el)}
+          selectedEl={styleTargetRef.current}
+          onRequestInsert={openInsertModal}
+          onContextMenu={(el, x, y) => openContextMenu(el, x, y)}
+          onDragStart={handleTreeDragStart}
+          onDragEnd={handleTreeDragEnd}
+          onDrop={(el, pos) => handleTreeDropOn(el, pos)}
+        />
+
+        {/* Center workspace with canvas (pan/zoom outside preview) */}
+        <div className="relative flex-1 h-full overflow-hidden">
+          <div
+            ref={workspaceRef}
+            className="absolute left-0 right-0 bottom-0 top-0 overflow-hidden bg-[#0b0b0b]"
+            title="Use trackpad: scroll to pan, pinch to zoom (outside preview)"
+          >
+            {/* Visual grid background */}
+            <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.08)_1px,transparent_1px)] bg-[length:18px_18px]" />
+            {/* Canvas container */}
+            <div ref={canvasRef} className="relative w-max h-max select-none">
+              {/* Frame wrapper - treated as 'preview area' */}
+              <div
+                ref={frameRef}
+                className="relative shadow-2xl ring-1 ring-white/10 bg-white rounded-md"
+                style={{ width: frameWidth, height: frameHeight }}
+              >
+                {sanitizedHTML ? (
+                  <iframe
+                    ref={iframeRef}
+                    className="w-full h-full border-0 rounded-md bg-white"
+                    title="Portfolio Preview"
+                    sandbox="allow-scripts allow-popups allow-forms allow-modals allow-pointer-lock allow-downloads allow-top-navigation-by-user-activation allow-popups-to-escape-sandbox allow-same-origin"
+                  />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center text-gray-400">
+                    <div className="text-center">
+                      <div className="text-6xl mb-4">📝</div>
+                      <p className="text-xl">No content to preview</p>
+                      <p className="text-sm mt-2">
+                        Go back to editor and add some HTML code
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right sidebar: Style Editor */}
+        <StyleEditorPanel
+          mode="sidebar"
+          visible={stylePanelVisible}
+          onClose={clearSelection}
+          styleTargetTag={styleTargetRef.current?.tagName.toLowerCase()}
+          inlineStyles={inlineStyles}
+          setInlineStyles={setInlineStyles}
+          applyInlineStyle={applyInlineStyle}
+          newProp={newProp}
+          setNewProp={setNewProp}
+          newVal={newVal}
+          setNewVal={setNewVal}
+          computedCollapsed={computedCollapsed}
+          setComputedCollapsed={setComputedCollapsed}
+          computedStyles={computedStyles}
+          qcText={qcText}
+          setQcText={setQcText}
+          applyQuickText={applyQuickText}
+          qcColor={qcColor}
+          setQcColor={setQcColor}
+          qcBg={qcBg}
+          setQcBg={setQcBg}
+          qcBorderColor={qcBorderColor}
+          setQcBorderColor={setQcBorderColor}
+          qcWidth={qcWidth}
+          setQcWidth={setQcWidth}
+          qcWidthUnit={qcWidthUnit}
+          setQcWidthUnit={setQcWidthUnit}
+          qcHeight={qcHeight}
+          setQcHeight={setQcHeight}
+          qcHeightUnit={qcHeightUnit}
+          setQcHeightUnit={setQcHeightUnit}
+          qcPad={qcPad}
+          setQcPad={setQcPad}
+          qcMar={qcMar}
+          setQcMar={setQcMar}
+          qcBorderWidth={qcBorderWidth}
+          setQcBorderWidth={setQcBorderWidth}
+          qcBorderWidthUnit={qcBorderWidthUnit}
+          setQcBorderWidthUnit={setQcBorderWidthUnit}
+          qcBorderStyle={qcBorderStyle}
+          setQcBorderStyle={setQcBorderStyle}
+          qcBorderRadius={qcBorderRadius}
+          setQcBorderRadius={setQcBorderRadius}
+          qcBorderRadiusUnit={qcBorderRadiusUnit}
+          setQcBorderRadiusUnit={setQcBorderRadiusUnit}
+          qcFontSize={qcFontSize}
+          setQcFontSize={setQcFontSize}
+          qcFontSizeUnit={qcFontSizeUnit}
+          setQcFontSizeUnit={setQcFontSizeUnit}
+          qcFontWeight={qcFontWeight}
+          setQcFontWeight={setQcFontWeight}
+          qcTextAlign={qcTextAlign}
+          setQcTextAlign={setQcTextAlign}
+          qcDisplay={qcDisplay}
+          setQcDisplay={setQcDisplay}
+          qcFlexDirection={qcFlexDirection}
+          setQcFlexDirection={setQcFlexDirection}
+          qcJustifyContent={qcJustifyContent}
+          setQcJustifyContent={setQcJustifyContent}
+          qcAlignItems={qcAlignItems}
+          setQcAlignItems={setQcAlignItems}
+          qcFlexWrap={qcFlexWrap}
+          setQcFlexWrap={setQcFlexWrap}
+          qcGap={qcGap}
+          setQcGap={setQcGap}
+          qcGapUnit={qcGapUnit}
+          setQcGapUnit={setQcGapUnit}
+          mqMinWidth={mqMinWidth}
+          setMqMinWidth={setMqMinWidth}
+          mqProp={mqProp}
+          setMqProp={setMqProp}
+          mqVal={mqVal}
+          setMqVal={setMqVal}
+          mqRules={mqRules}
+          onAddMqProp={onAddMqProp}
+          onDeleteMqProp={onDeleteMqProp}
+        />
+      </div>
 
       {/* Context Menu */}
       {ctxMenuOpen && (
@@ -1520,142 +1977,31 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
             </div>
             <div className="p-3">
               <div className="text-xs text-gray-400 mb-2">
-                Choose a tag to insert inside the selected div
+                Choose an element to insert
               </div>
               <div className="grid grid-cols-4 gap-2">
-                {tagOptions.map((t) => (
-                  <button
-                    key={t}
-                    className="px-2 py-1 rounded-md border border-white/10 hover:bg-white/10 text-xs"
-                    onClick={() => insertTagIntoParent(t)}
-                    title={`Insert <${t}>`}
-                  >
-                    {`<${t}>`}
-                  </button>
-                ))}
+                {tagOptions.map((t) => {
+                  const icon = getIconForTag(t);
+                  const label = t === "div" ? "rectangle" : t;
+                  return (
+                    <button
+                      key={t}
+                      className="flex items-center gap-2 px-2 py-1 rounded-md border border-white/10 hover:bg-white/10 text-xs"
+                      onClick={() => insertTagIntoParent(t)}
+                      title={`Insert <${t}>`}
+                    >
+                      <span className="opacity-80 inline-block align-middle">
+                        {icon}
+                      </span>
+                      <span className="align-middle truncate">{label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
         </div>
       )}
-
-      {/* Center workspace with canvas (pan/zoom outside preview) */}
-      <div className="relative flex-1 h-full overflow-hidden">
-        <div
-          ref={workspaceRef}
-          className="absolute inset-0 overflow-hidden bg-[#0b0b0b]"
-          title="Use trackpad: scroll to pan, pinch to zoom (outside preview)"
-        >
-          {/* Visual grid background */}
-          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.08)_1px,transparent_1px)] bg-[length:18px_18px]" />
-          {/* Canvas container */}
-          <div ref={canvasRef} className="relative w-max h-max select-none">
-            {/* Frame wrapper - treated as 'preview area' */}
-            <div
-              ref={frameRef}
-              className="relative shadow-2xl ring-1 ring-white/10 bg-white rounded-md"
-              style={{ width: 1200, height: 800 }}
-            >
-              {sanitizedHTML ? (
-                <iframe
-                  ref={iframeRef}
-                  className="w-full h-full border-0 rounded-md bg-white"
-                  title="Portfolio Preview"
-                  sandbox="allow-scripts allow-popups allow-forms allow-modals allow-pointer-lock allow-downloads allow-top-navigation-by-user-activation allow-popups-to-escape-sandbox allow-same-origin"
-                />
-              ) : (
-                <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-                  <div className="text-center">
-                    <div className="text-6xl mb-4">📝</div>
-                    <p className="text-xl">No content to preview</p>
-                    <p className="text-sm mt-2">Go back to editor and add some HTML code</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Right sidebar: Style Editor */}
-      <StyleEditorPanel
-        mode="sidebar"
-        visible={stylePanelVisible}
-        onClose={clearSelection}
-        styleTargetTag={styleTargetRef.current?.tagName.toLowerCase()}
-        inlineStyles={inlineStyles}
-        setInlineStyles={setInlineStyles}
-        applyInlineStyle={applyInlineStyle}
-        newProp={newProp}
-        setNewProp={setNewProp}
-        newVal={newVal}
-        setNewVal={setNewVal}
-        computedCollapsed={computedCollapsed}
-        setComputedCollapsed={setComputedCollapsed}
-        computedStyles={computedStyles}
-        qcText={qcText}
-        setQcText={setQcText}
-        applyQuickText={applyQuickText}
-        qcColor={qcColor}
-        setQcColor={setQcColor}
-        qcBg={qcBg}
-        setQcBg={setQcBg}
-        qcBorderColor={qcBorderColor}
-        setQcBorderColor={setQcBorderColor}
-        qcWidth={qcWidth}
-        setQcWidth={setQcWidth}
-        qcWidthUnit={qcWidthUnit}
-        setQcWidthUnit={setQcWidthUnit}
-        qcHeight={qcHeight}
-        setQcHeight={setQcHeight}
-        qcHeightUnit={qcHeightUnit}
-        setQcHeightUnit={setQcHeightUnit}
-        qcPad={qcPad}
-        setQcPad={setQcPad}
-        qcMar={qcMar}
-        setQcMar={setQcMar}
-        qcBorderWidth={qcBorderWidth}
-        setQcBorderWidth={setQcBorderWidth}
-        qcBorderWidthUnit={qcBorderWidthUnit}
-        setQcBorderWidthUnit={setQcBorderWidthUnit}
-        qcBorderStyle={qcBorderStyle}
-        setQcBorderStyle={setQcBorderStyle}
-        qcBorderRadius={qcBorderRadius}
-        setQcBorderRadius={setQcBorderRadius}
-        qcBorderRadiusUnit={qcBorderRadiusUnit}
-        setQcBorderRadiusUnit={setQcBorderRadiusUnit}
-        qcFontSize={qcFontSize}
-        setQcFontSize={setQcFontSize}
-        qcFontSizeUnit={qcFontSizeUnit}
-        setQcFontSizeUnit={setQcFontSizeUnit}
-        qcFontWeight={qcFontWeight}
-        setQcFontWeight={setQcFontWeight}
-        qcTextAlign={qcTextAlign}
-        setQcTextAlign={setQcTextAlign}
-        qcDisplay={qcDisplay}
-        setQcDisplay={setQcDisplay}
-        qcFlexDirection={qcFlexDirection}
-        setQcFlexDirection={setQcFlexDirection}
-        qcJustifyContent={qcJustifyContent}
-        setQcJustifyContent={setQcJustifyContent}
-        qcAlignItems={qcAlignItems}
-        setQcAlignItems={setQcAlignItems}
-        qcFlexWrap={qcFlexWrap}
-        setQcFlexWrap={setQcFlexWrap}
-        qcGap={qcGap}
-        setQcGap={setQcGap}
-        qcGapUnit={qcGapUnit}
-        setQcGapUnit={setQcGapUnit}
-        mqMinWidth={mqMinWidth}
-        setMqMinWidth={setMqMinWidth}
-        mqProp={mqProp}
-        setMqProp={setMqProp}
-        mqVal={mqVal}
-        setMqVal={setMqVal}
-        mqRules={mqRules}
-        onAddMqProp={onAddMqProp}
-        onDeleteMqProp={onDeleteMqProp}
-      />
     </div>
   );
 };

@@ -43,7 +43,10 @@ interface DomTreeProps {
   onContextMenu?: (el: HTMLElement, x: number, y: number) => void;
   onDragStart?: (el: HTMLElement) => void;
   onDragEnd?: () => void;
-  onDrop?: (targetEl: HTMLElement, position: "before" | "after") => void;
+  onDrop?: (
+    targetEl: HTMLElement,
+    position: "before" | "after" | "inside"
+  ) => void;
 }
 
 const containerTags = new Set([
@@ -130,7 +133,7 @@ const DomTree: React.FC<DomTreeProps> = ({
   const draggingElRef = React.useRef<HTMLElement | null>(null);
   const [dropHint, setDropHint] = React.useState<{
     key: string;
-    pos: "before" | "after";
+    pos: "before" | "after" | "inside";
   } | null>(null);
 
   // Clear any stale drop hints if the drag ends anywhere in the window
@@ -214,8 +217,12 @@ const DomTree: React.FC<DomTreeProps> = ({
             e.preventDefault();
             const sameParent = src.parentElement === node.el.parentElement;
             const notSelf = src !== node.el;
+            const isDescendant = node.el.contains(src);
+            const isAncestor = src.contains(node.el);
+            // Allow dropping inside ancestor containers (e.g., body). Only forbid into a descendant (cycle) or self.
+            const canInside = isContainer && notSelf && !isAncestor;
             try {
-              e.dataTransfer.dropEffect = sameParent && notSelf ? "move" : "none";
+              e.dataTransfer.dropEffect = sameParent && notSelf ? "move" : canInside ? "move" : "none";
             } catch {}
           }}
           onDragOver={(e: ReactDragEvent) => {
@@ -223,15 +230,25 @@ const DomTree: React.FC<DomTreeProps> = ({
             if (!src) return;
             // Always prevent default during an active drag so drop can fire
             e.preventDefault();
-            // Only allow reordering among siblings
             const sameParent = src.parentElement === node.el.parentElement;
             const notSelf = src !== node.el;
-            if (sameParent && notSelf) {
-              const rect = (
-                e.currentTarget as HTMLElement
-              ).getBoundingClientRect();
-              const pos: "before" | "after" =
-                e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+            const isDescendant = node.el.contains(src);
+            const isAncestor = src.contains(node.el);
+            // Allow dropping inside ancestor containers (e.g., body). Only forbid into a descendant (cycle) or self.
+            const canInside = isContainer && notSelf && !isAncestor;
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            const y = e.clientY;
+            const rel = (y - rect.top) / Math.max(1, rect.height);
+            let pos: "before" | "after" | "inside";
+            if (canInside && rel > 0.33 && rel < 0.67) {
+              pos = "inside";
+            } else {
+              pos = rel < 0.5 ? "before" : "after";
+            }
+            const valid =
+              (pos === "inside" && canInside) ||
+              ((pos === "before" || pos === "after") && sameParent && notSelf);
+            if (valid) {
               if (!dropHint || dropHint.key !== node.key || dropHint.pos !== pos) {
                 setDropHint({ key: node.key, pos });
               }
@@ -239,7 +256,6 @@ const DomTree: React.FC<DomTreeProps> = ({
                 e.dataTransfer.dropEffect = "move";
               } catch {}
             } else {
-              // invalid target: clear hint if it belongs to this row and show not-allowed
               if (dropHint && dropHint.key === node.key) setDropHint(null);
               try {
                 e.dataTransfer.dropEffect = "none";
@@ -261,18 +277,25 @@ const DomTree: React.FC<DomTreeProps> = ({
             }
             const sameParent = src.parentElement === node.el.parentElement;
             const notSelf = src !== node.el;
-            if (sameParent && notSelf) {
-              // Prefer the current hint; if missing (e.g., cleared by dragleave), compute from cursor
-              let pos: "before" | "after";
-              if (dropHint && dropHint.key === node.key) {
-                pos = dropHint.pos;
-              } else {
-                const rect = (
-                  e.currentTarget as HTMLElement
-                ).getBoundingClientRect();
-                pos =
-                  e.clientY < rect.top + rect.height / 2 ? "before" : "after";
-              }
+            const isDescendant = node.el.contains(src);
+            const isAncestor = src.contains(node.el);
+            // Allow dropping inside ancestor containers (e.g., body). Only forbid into a descendant (cycle) or self.
+            const canInside = isContainer && notSelf && !isAncestor;
+            // Prefer hint; if missing, recompute quickly
+            let pos: "before" | "after" | "inside" | null = null;
+            if (dropHint && dropHint.key === node.key) {
+              pos = dropHint.pos;
+            } else {
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              const rel = (e.clientY - rect.top) / Math.max(1, rect.height);
+              if (canInside && rel > 0.33 && rel < 0.67) pos = "inside";
+              else pos = rel < 0.5 ? "before" : "after";
+            }
+            const valid =
+              pos !== null &&
+              ((pos === "inside" && canInside) ||
+                ((pos === "before" || pos === "after") && sameParent && notSelf));
+            if (valid && pos) {
               onDrop && onDrop(node.el, pos);
             }
             setDropHint(null);
@@ -351,6 +374,13 @@ const DomTree: React.FC<DomTreeProps> = ({
             style={{ marginLeft: depth * 12 + 8 }}
           />
         )}
+        {/* Drop indicator INSIDE (as a dashed pill, indented as a child) */}
+        {dropHint && dropHint.key === node.key && dropHint.pos === "inside" && (
+          <div
+            className="my-1 rounded border border-dashed border-blue-500/70 bg-blue-500/10"
+            style={{ marginLeft: depth * 12 + 20, height: 18 }}
+          />
+        )}
         {hasChildren && expanded && (
           <div>
             {node.children.map((c) => (
@@ -377,9 +407,6 @@ const DomTree: React.FC<DomTreeProps> = ({
         }
       }}
     >
-      <div className="sticky top-0 z-10 px-3 py-2 bg-[#0c0c0c] border-b border-white/10 text-xs font-semibold">
-        {title}
-      </div>
       <div className="p-1 text-xs">
         {tree ? <NodeView node={tree} depth={0} /> : null}
       </div>

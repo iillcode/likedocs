@@ -1,39 +1,34 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import MonacoEditor from "../components/MonacoEditor";
-import PreviewSection from "../components/PreviewSection";
+
+function generateId() {
+  try {
+    if (typeof crypto !== "undefined" && (crypto as any).randomUUID) {
+      return (crypto as any).randomUUID();
+    }
+  } catch {}
+  return "proj_" + Math.random().toString(36).slice(2, 10);
+}
 
 export default function Home() {
   const [htmlCode, setHtmlCode] = useState<string>("");
-  const [currentView, setCurrentView] = useState<"editor" | "preview">(
-    "editor"
-  );
+  const router = useRouter();
 
   const handleCodeSubmit = (code: string) => {
+    const id = generateId();
     setHtmlCode(code);
-    setCurrentView("preview");
-  };
-
-  const handleBackToEditor = () => {
-    setCurrentView("editor");
-  };
-
-  const handleCodeUpdate = (newCode: string) => {
-    setHtmlCode(newCode);
+    try {
+      localStorage.setItem(`likedocs:project:${id}`, code);
+    } catch {}
+    router.push(`/project/${id}`);
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
-      {currentView === "editor" ? (
-        <MonacoEditor onCodeSubmit={handleCodeSubmit} initialCode={htmlCode} />
-      ) : (
-        <PreviewSection
-          htmlCode={htmlCode}
-          onBackToEditor={handleBackToEditor}
-          onCodeUpdate={handleCodeUpdate}
-        />
-      )}
+      <MonacoEditor onCodeSubmit={handleCodeSubmit} initialCode={htmlCode} />
     </div>
   );
 }

@@ -126,7 +126,6 @@ interface StyleEditorPanelProps {
 
 const StyleEditorPanel: React.FC<StyleEditorPanelProps> = (props) => {
   if (!props.visible) return null;
-  const tagLabel = props.styleTargetTag ? `- <${props.styleTargetTag}>` : "";
   const sidebar = props.mode === "sidebar";
 
   // (UI state moved into modular sections where needed)
@@ -171,19 +170,10 @@ const StyleEditorPanel: React.FC<StyleEditorPanelProps> = (props) => {
           : "absolute inset-x-2 bottom-2 sm:inset-auto sm:bottom-4 sm:right-4 sm:w-[420px] md:w-[460px] max-h-[72vh] rounded-2xl border border-white/10 bg-[#101010]/95 backdrop-blur-xl shadow-2xl text-gray-100 flex flex-col overflow-hidden"
       }
     >
-      <div className="flex items-center justify-between px-5 py-3 bg-[#0d0d0d] border-b border-white/10 text-white sticky top-0 z-10">
-        <div className="text-sm font-semibold">Style editor {tagLabel}</div>
-        <button
-          className="text-white/80 hover:text-white text-lg leading-none rounded-md p-2 hover:bg-white/5 transition"
-          onClick={props.onClose}
-        >
-          ×
-        </button>
-      </div>
 
       <div
         className={[
-          "p-5 space-y-6 overflow-auto",
+          "p-2 space-y-6 overflow-auto",
           sidebar ? "flex-1" : "",
         ].join(" ")}
       >
@@ -198,6 +188,7 @@ const StyleEditorPanel: React.FC<StyleEditorPanelProps> = (props) => {
           qcBorderColor={props.qcBorderColor}
           setQcBorderColor={props.setQcBorderColor}
           applyInlineStyle={props.applyInlineStyle}
+          onClose={props.onClose}
         />
 
         <LayoutSection
