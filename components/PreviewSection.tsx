@@ -125,6 +125,17 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   // Quick text edit
   const [qcText, setQcText] = useState<string>("");
   const quickTextTargetRef = useRef<HTMLElement | null>(null);
+  // Media query editor state
+  const [mqMinWidth, setMqMinWidth] = useState<string>("");
+  const [mqProp, setMqProp] = useState<string>("");
+  const [mqVal, setMqVal] = useState<string>("");
+  const [mqRules, setMqRules] = useState<
+    Array<{ id: string; label: string; min: number | null; prop: string; value: string }>
+  >([]);
+  const mqAllRulesRef = useRef<
+    Record<string, Array<{ id: string; min: number | null; prop: string; value: string }>>
+  >({});
+  const mqRuleIdRef = useRef<number>(1);
   // Insert modal state
   const [insertModalOpen, setInsertModalOpen] = useState(false);
   const insertParentRef = useRef<HTMLElement | null>(null);
@@ -370,6 +381,10 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
             });
             mutationObserverRef.current = observer;
           } catch {}
+          // Reapply any existing media query rules into a style tag inside the iframe
+          try {
+            rebuildMqStyleSheet();
+          } catch {}
         }, 100);
       }
     }
@@ -385,6 +400,15 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     try {
       undoStackRef.current.push(doc.documentElement.outerHTML);
       redoStackRef.current = [];
+    } catch {}
+    // If element has a likedocs id, remove its MQ rules
+    try {
+      const key = el.getAttribute("data-likedocs-id");
+      if (key && mqAllRulesRef.current[key]) {
+        delete mqAllRulesRef.current[key];
+        rebuildMqStyleSheet();
+        if (styleTargetRef.current === el) setMqRules([]);
+      }
     } catch {}
     try {
       el.parentElement?.removeChild(el);
@@ -750,6 +774,11 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     positionOverlay(el, selectOverlayRef.current!, "#3b82f6");
     // Initialize quick controls
     initQuickControls(el);
+    // Ensure element has a persistent key for MQ rules and refresh its rules list
+    try {
+      ensureElementKey(el);
+      updateMqRulesListFor(el);
+    } catch {}
     // Observe size changes on selected element to keep overlay aligned
     try {
       // Disconnect any previous observer
@@ -825,6 +854,84 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     // keep selection overlay in sync with size changes
     repositionSelectedOverlay();
     // DOM tree may need refresh if structure changed (rare for style changes)
+  };
+
+  // ========= Media query stylesheet helpers =========
+  const ensureMqStyleElement = (doc: Document): HTMLStyleElement => {
+    let style = doc.getElementById("likedocs-mq-style") as HTMLStyleElement | null;
+    if (!style) {
+      style = doc.createElement("style");
+      style.id = "likedocs-mq-style";
+      doc.head.appendChild(style);
+    }
+    return style;
+  };
+
+  const ensureElementKey = (el: HTMLElement): string => {
+    let key = el.getAttribute("data-likedocs-id");
+    if (!key) {
+      key = `el_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      el.setAttribute("data-likedocs-id", key);
+    }
+    return key;
+  };
+
+  const rebuildMqStyleSheet = () => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    const styleEl = ensureMqStyleElement(doc);
+    let css = "";
+    const all = mqAllRulesRef.current;
+    for (const key of Object.keys(all)) {
+      const selector = `[data-likedocs-id="${key}"]`;
+      for (const r of all[key]) {
+        if (r.min && !isNaN(r.min)) {
+          css += `@media (min-width: ${r.min}px) { ${selector} { ${r.prop}: ${r.value}; } }\n`;
+        } else {
+          css += `${selector} { ${r.prop}: ${r.value}; }\n`;
+        }
+      }
+    }
+    styleEl.textContent = css;
+  };
+
+  const updateMqRulesListFor = (el: HTMLElement) => {
+    const key = ensureElementKey(el);
+    const list = (mqAllRulesRef.current[key] || []).map((r) => ({
+      id: r.id,
+      min: r.min,
+      prop: r.prop,
+      value: r.value,
+      label:
+        (r.min ? `≥${r.min}px` : "All") + " — " + `${r.prop}: ${r.value}`,
+    }));
+    setMqRules(list);
+  };
+
+  const onAddMqProp = (min: string, prop: string, value: string) => {
+    const el = styleTargetRef.current;
+    if (!el) return;
+    const key = ensureElementKey(el);
+    const minNum = min.trim() === "" ? null : Number.parseInt(min, 10);
+    const id = `r${mqRuleIdRef.current++}`;
+    const entry = { id, min: (minNum ?? null), prop: prop.trim(), value: value.trim() };
+    if (!mqAllRulesRef.current[key]) mqAllRulesRef.current[key] = [];
+    mqAllRulesRef.current[key].push(entry);
+    rebuildMqStyleSheet();
+    updateMqRulesListFor(el);
+    // reposition overlay in case style change affects size
+    try { repositionSelectedOverlay(); } catch {}
+  };
+
+  const onDeleteMqProp = (id: string) => {
+    const el = styleTargetRef.current;
+    if (!el) return;
+    const key = ensureElementKey(el);
+    const arr = mqAllRulesRef.current[key] || [];
+    mqAllRulesRef.current[key] = arr.filter((r) => r.id !== id);
+    rebuildMqStyleSheet();
+    updateMqRulesListFor(el);
+    try { repositionSelectedOverlay(); } catch {}
   };
 
   // ========= Overlay helpers =========
@@ -961,11 +1068,15 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     setQcFontWeight(getComputed(el, "font-weight") || "");
     setQcTextAlign(getComputed(el, "text-align") || "");
     // Layout
-    setQcDisplay(getComputed(el, "display") || "");
-    setQcFlexDirection(getComputed(el, "flex-direction") || "");
-    setQcJustifyContent(getComputed(el, "justify-content") || "");
-    setQcAlignItems(getComputed(el, "align-items") || "");
-    setQcFlexWrap(getComputed(el, "flex-wrap") || "");
+    const display = (getComputed(el, "display") || "").trim();
+    setQcDisplay(display);
+    const isFlex = display.includes("flex"); // matches flex or inline-flex
+    setQcFlexDirection(isFlex ? getComputed(el, "flex-direction") || "" : "");
+    const jc = (getComputed(el, "justify-content") || "").trim();
+    setQcJustifyContent(jc === "normal" ? "" : jc);
+    const ai = (getComputed(el, "align-items") || "").trim();
+    setQcAlignItems(ai === "normal" ? "" : ai);
+    setQcFlexWrap(isFlex ? getComputed(el, "flex-wrap") || "" : "");
     setQcGap(parseUnit(getComputed(el, "gap")).num);
     setQcGapUnit(parseUnit(getComputed(el, "gap")).unit || "px");
     // Text content target
@@ -1535,6 +1646,15 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
         setQcGap={setQcGap}
         qcGapUnit={qcGapUnit}
         setQcGapUnit={setQcGapUnit}
+        mqMinWidth={mqMinWidth}
+        setMqMinWidth={setMqMinWidth}
+        mqProp={mqProp}
+        setMqProp={setMqProp}
+        mqVal={mqVal}
+        setMqVal={setMqVal}
+        mqRules={mqRules}
+        onAddMqProp={onAddMqProp}
+        onDeleteMqProp={onDeleteMqProp}
       />
     </div>
   );
