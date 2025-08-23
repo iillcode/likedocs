@@ -14,6 +14,8 @@ interface StyleEditorPanelProps {
   visible: boolean;
   onClose: () => void;
   styleTargetTag?: string;
+  // Layout mode: floating panel (default) or right-hand sidebar
+  mode?: "sidebar" | "floating";
 
   // Inline styles list
   inlineStyles: KV[];
@@ -70,15 +72,22 @@ interface StyleEditorPanelProps {
 const StyleEditorPanel: React.FC<StyleEditorPanelProps> = (props) => {
   if (!props.visible) return null;
   const tagLabel = props.styleTargetTag ? `- <${props.styleTargetTag}>` : "";
+  const sidebar = props.mode === "sidebar";
 
   return (
-    <div className="absolute inset-x-2 bottom-2 sm:inset-auto sm:bottom-4 sm:right-4 sm:w-[420px] md:w-[460px] max-h-[72vh] rounded-2xl border border-white/10 bg-[#101010]/95 backdrop-blur-xl shadow-2xl text-gray-100 flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 bg-[#0d0d0d] border-b border-white/10 text-white">
+    <div
+      className={
+        sidebar
+          ? "w-80 md:w-96 h-full border-l border-white/10 bg-[#0e0e0e] text-gray-100 flex flex-col overflow-hidden"
+          : "absolute inset-x-2 bottom-2 sm:inset-auto sm:bottom-4 sm:right-4 sm:w-[420px] md:w-[460px] max-h-[72vh] rounded-2xl border border-white/10 bg-[#101010]/95 backdrop-blur-xl shadow-2xl text-gray-100 flex flex-col overflow-hidden"
+      }
+    >
+      <div className="flex items-center justify-between px-3 py-2 bg-[#0d0d0d] border-b border-white/10 text-white sticky top-0 z-10">
         <div className="text-sm font-semibold">Style editor {tagLabel}</div>
         <button className="text-white/80 hover:text-white text-lg leading-none rounded-md p-1 hover:bg-white/5 transition" onClick={props.onClose}>×</button>
       </div>
 
-      <div className="p-3 space-y-4 overflow-auto">
+      <div className={["p-3 space-y-4 overflow-auto", sidebar ? "flex-1" : ""].join(" ")}>
         {/* Quick Edit Section */}
         <div>
           <div className="text-xs font-semibold text-slate-200/80 mb-2">Quick edit</div>

@@ -40,6 +40,15 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   const [currentHtml, setCurrentHtml] = useState(htmlCode);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Canvas workspace (pan/zoom) refs
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const scaleRef = useRef<number>(1);
+  const translateRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const rafRef = useRef<number | null>(null);
+  const isPanningRef = useRef<boolean>(false);
+  const lastPointRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   // DOM tree state
   const [domTree, setDomTree] = useState<DomTreeNode | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
@@ -62,6 +71,10 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   // Overlay highlights
   const hoverOverlayRef = useRef<HTMLDivElement | null>(null);
   const selectOverlayRef = useRef<HTMLDivElement | null>(null);
+  // Track last hover pointer position inside iframe and a RO for selected element
+  const lastHoverPosRef = useRef<{ x: number; y: number } | null>(null);
+  const selectedRORef = useRef<any>(null);
+  const selectedScrollCleanupsRef = useRef<Array<() => void>>([]);
   // Quick controls state
   const [qcColor, setQcColor] = useState<string>("");
   const [qcBg, setQcBg] = useState<string>("");
@@ -154,6 +167,9 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   const redoStackRef = useRef<string[]>([]);
   // For inline editing: snapshot taken at edit start, only committed on save
   const pendingEditSnapshotRef = useRef<string | null>(null);
+  // Observe DOM/text changes in preview to refresh tree labels
+  const mutationObserverRef = useRef<MutationObserver | null>(null);
+  const observerTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     // Sanitize while allowing full-document HTML and scripts/styles for previewing user content
@@ -195,6 +211,106 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     setCurrentHtml(sanitized);
   }, [htmlCode]);
 
+  // ======== Canvas pan/zoom handlers (outside iframe only) ========
+  useEffect(() => {
+    const ws = workspaceRef.current;
+    if (!ws) return;
+
+    const applyTransform = () => {
+      if (!canvasRef.current) return;
+      const { x, y } = translateRef.current;
+      const s = scaleRef.current;
+      canvasRef.current.style.transform = `translate(${x}px, ${y}px) scale(${s})`;
+      // Keep selection overlay aligned after any transform
+      try {
+        repositionSelectedOverlay();
+      } catch {}
+    };
+
+    const isInsideFrame = (clientX: number, clientY: number) => {
+      const el = frameRef.current;
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      // Only act if pointer is outside the preview frame
+      if (isInsideFrame(e.clientX, e.clientY)) return;
+      // Prevent page scroll
+      e.preventDefault();
+      // Trackpads: pinch-zoom often sets ctrlKey; deltaY sign controls zoom direction
+      const zooming = e.ctrlKey || (e as any).metaKey;
+      if (zooming) {
+        const old = scaleRef.current;
+        const factor = Math.exp((-e.deltaY || 0) * 0.0015);
+        let next = Math.min(4, Math.max(0.2, old * factor));
+        scaleRef.current = next;
+      } else {
+        // Two-finger scroll pans the canvas
+        translateRef.current = {
+          x: translateRef.current.x - (e.deltaX || 0),
+          y: translateRef.current.y - (e.deltaY || 0),
+        };
+      }
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(applyTransform);
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      // Start panning only when the pointer is in canvas background area (not over the frame)
+      if (isInsideFrame(e.clientX, e.clientY)) return;
+      isPanningRef.current = true;
+      lastPointRef.current = { x: e.clientX, y: e.clientY };
+      try { (e.target as Element).setPointerCapture?.(e.pointerId); } catch {}
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!isPanningRef.current) return;
+      // If pointer enters the preview frame mid-drag, stop panning (gate interactions)
+      if (isInsideFrame(e.clientX, e.clientY)) {
+        isPanningRef.current = false;
+        try { (e.target as Element).releasePointerCapture?.(e.pointerId); } catch {}
+        return;
+      }
+      const dx = e.clientX - lastPointRef.current.x;
+      const dy = e.clientY - lastPointRef.current.y;
+      lastPointRef.current = { x: e.clientX, y: e.clientY };
+      translateRef.current = {
+        x: translateRef.current.x + dx,
+        y: translateRef.current.y + dy,
+      };
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(applyTransform);
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      isPanningRef.current = false;
+      try { (e.target as Element).releasePointerCapture?.(e.pointerId); } catch {}
+    };
+
+    // Initialize transform (center-ish)
+    try {
+      const rect = ws.getBoundingClientRect();
+      translateRef.current = { x: rect.width * 0.5 - 600, y: rect.height * 0.5 - 400 };
+      scaleRef.current = 0.9;
+      if (canvasRef.current) {
+        canvasRef.current.style.transformOrigin = "0 0";
+        canvasRef.current.style.willChange = "transform";
+      }
+      requestAnimationFrame(applyTransform);
+    } catch {}
+
+    ws.addEventListener("wheel", onWheel, { passive: false } as AddEventListenerOptions);
+    ws.addEventListener("pointerdown", onPointerDown as any, true);
+    window.addEventListener("pointermove", onPointerMove as any, true);
+    window.addEventListener("pointerup", onPointerUp as any, true);
+    return () => {
+      ws.removeEventListener("wheel", onWheel as any, true as any);
+      ws.removeEventListener("pointerdown", onPointerDown as any, true);
+      window.removeEventListener("pointermove", onPointerMove as any, true);
+      window.removeEventListener("pointerup", onPointerUp as any, true);
+    };
+  }, []);
+
   useEffect(() => {
     if (iframeRef.current && sanitizedHTML) {
       const iframe = iframeRef.current;
@@ -202,6 +318,11 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
         iframe.contentDocument || iframe.contentWindow?.document;
 
       if (iframeDoc) {
+        // Disconnect any prior observer before reloading the iframe document
+        try {
+          mutationObserverRef.current?.disconnect();
+          mutationObserverRef.current = null;
+        } catch {}
         iframeDoc.open();
         iframeDoc.write(sanitizedHTML);
         iframeDoc.close();
@@ -212,6 +333,42 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
           // Build initial DOM tree for sidebar
           try {
             refreshDomTreeFromDoc(iframeDoc);
+          } catch {}
+          // Install a mutation observer to update the DOM tree when content changes
+          try {
+            const win = iframeDoc.defaultView as Window;
+            const MutationObs = (win as any).MutationObserver || MutationObserver;
+            const observer = new MutationObs((mutations: MutationRecord[]) => {
+              // Skip pure overlay mutations, but respond when at least one non-overlay mutation exists
+              const hasNonOverlayMutation = mutations.some((m) => {
+                const node = m.target as Node;
+                const el = (node.nodeType === Node.TEXT_NODE
+                  ? (node.parentElement as HTMLElement | null)
+                  : (node as HTMLElement | null));
+                if (!el) return true; // treat unknown as real change
+                const isOverlay =
+                  el.hasAttribute?.("data-likedocs-overlay") ||
+                  el.classList?.contains("likedocs-overlay");
+                return !isOverlay;
+              });
+              if (!hasNonOverlayMutation) return;
+              // Debounce refreshes
+              if (observerTimerRef.current) {
+                window.clearTimeout(observerTimerRef.current);
+              }
+              observerTimerRef.current = window.setTimeout(() => {
+                try {
+                  refreshDomTreeFromDoc(iframeDoc);
+                } catch {}
+              }, 120) as unknown as number;
+            });
+            observer.observe(iframeDoc.body || iframeDoc.documentElement, {
+              subtree: true,
+              childList: true,
+              characterData: true,
+              attributes: false,
+            });
+            mutationObserverRef.current = observer;
           } catch {}
         }, 100);
       }
@@ -302,10 +459,18 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     let idx = 0;
     const excluded = new Set(["script", "style", "title"]);
     for (const child of Array.from(el.children)) {
-      const tag = (child as Element).tagName.toLowerCase();
+      const childEl = child as HTMLElement;
+      const tag = childEl.tagName.toLowerCase();
       if (excluded.has(tag)) continue;
+      // Skip internal overlays used for hover/selection highlighting
+      if (
+        childEl.hasAttribute("data-likedocs-overlay") ||
+        childEl.classList.contains("likedocs-overlay")
+      ) {
+        continue;
+      }
       const childKey = `${keyPath}/${tag}[${idx}]`;
-      children.push(buildTreeFromElement(child as Element, childKey));
+      children.push(buildTreeFromElement(childEl as Element, childKey));
       idx++;
     }
     return {
@@ -547,6 +712,33 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     setComputedStyles(list);
   };
 
+  // ======== Auto-expand DOM tree to selected element ========
+  const findPathToEl = (
+    node: DomTreeNode | null,
+    target: HTMLElement,
+    acc: string[] = []
+  ): string[] | null => {
+    if (!node) return null;
+    const nextAcc = [...acc, node.key];
+    if (node.el === target) return nextAcc;
+    for (const child of node.children) {
+      const res = findPathToEl(child, target, nextAcc);
+      if (res) return res;
+    }
+    return null;
+  };
+
+  const expandPathToElement = (el: HTMLElement) => {
+    if (!domTree) return;
+    const path = findPathToEl(domTree, el);
+    if (!path) return;
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      path.forEach((k) => next.add(k));
+      return next;
+    });
+  };
+
   const openStylePanelFor = (el: HTMLElement) => {
     styleTargetRef.current = el;
     setInlineStyles(parseInline(el.getAttribute("style")));
@@ -558,6 +750,54 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     positionOverlay(el, selectOverlayRef.current!, "#3b82f6");
     // Initialize quick controls
     initQuickControls(el);
+    // Observe size changes on selected element to keep overlay aligned
+    try {
+      // Disconnect any previous observer
+      selectedRORef.current?.disconnect?.();
+    } catch {}
+    try {
+      const win = doc.defaultView as Window | null;
+      const RO = (win as any)?.ResizeObserver || (window as any).ResizeObserver;
+      if (RO) {
+        const ro = new RO(() => {
+          try {
+            repositionSelectedOverlay();
+          } catch {}
+        });
+        ro.observe(el);
+        selectedRORef.current = ro;
+      }
+    } catch {}
+    // Ensure the DOM tree expands to reveal this element
+    try {
+      expandPathToElement(el);
+    } catch {}
+    // Attach scroll listeners on the selected element's ancestor chain
+    try {
+      // cleanup prior
+      selectedScrollCleanupsRef.current.forEach((fn) => fn());
+    } catch {}
+    selectedScrollCleanupsRef.current = [];
+    try {
+      const onAncestorScroll = () => {
+        repositionSelectedOverlay();
+      };
+      let cur: HTMLElement | null = el;
+      while (cur) {
+        cur.addEventListener("scroll", onAncestorScroll, true);
+        selectedScrollCleanupsRef.current.push(() =>
+          cur?.removeEventListener("scroll", onAncestorScroll, true)
+        );
+        cur = cur.parentElement as HTMLElement | null;
+      }
+      const w = (el.ownerDocument as Document).defaultView as Window | null;
+      if (w) {
+        w.addEventListener("scroll", onAncestorScroll, true);
+        selectedScrollCleanupsRef.current.push(() =>
+          w.removeEventListener("scroll", onAncestorScroll, true)
+        );
+      }
+    } catch {}
   };
 
   const applyInlineStyle = (prop: string, value: string) => {
@@ -592,6 +832,9 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     const body = doc.body;
     if (!hoverOverlayRef.current) {
       const hov = doc.createElement("div");
+      // mark as internal overlay so DOM tree can ignore it
+      hov.setAttribute("data-likedocs-overlay", "hover");
+      hov.classList.add("likedocs-overlay");
       hov.style.position = "absolute";
       hov.style.pointerEvents = "none";
       hov.style.zIndex = "2147483645";
@@ -603,6 +846,9 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     }
     if (!selectOverlayRef.current) {
       const sel = doc.createElement("div");
+      // mark as internal overlay so DOM tree can ignore it
+      sel.setAttribute("data-likedocs-overlay", "select");
+      sel.classList.add("likedocs-overlay");
       sel.style.position = "absolute";
       sel.style.pointerEvents = "none";
       sel.style.zIndex = "2147483646";
@@ -645,9 +891,33 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   const clearSelection = () => {
     styleTargetRef.current = null;
     setStylePanelVisible(false);
+    // Disconnect any ResizeObserver on selection
+    try {
+      selectedRORef.current?.disconnect?.();
+    } catch {}
+    selectedRORef.current = null;
+    // Remove any scroll listeners attached to ancestor chain
+    try {
+      selectedScrollCleanupsRef.current.forEach((fn) => fn());
+    } catch {}
+    selectedScrollCleanupsRef.current = [];
     hideOverlay(selectOverlayRef.current);
     hideOverlay(hoverOverlayRef.current);
   };
+
+  // Cleanup observer and timers on unmount
+  useEffect(() => {
+    return () => {
+      try {
+        mutationObserverRef.current?.disconnect();
+      } catch {}
+      mutationObserverRef.current = null;
+      if (observerTimerRef.current) {
+        window.clearTimeout(observerTimerRef.current);
+        observerTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // ========= Quick controls helpers =========
   // (moved getters and parsers to utils/styleUtils)
@@ -817,6 +1087,10 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       positionOverlay(t, hoverOverlayRef.current!);
     };
     const onMouseOut = () => hideOverlay(hoverOverlayRef.current);
+    const onMouseMove = (e: MouseEvent) => {
+      // Track last known pointer position inside iframe viewport
+      lastHoverPosRef.current = { x: e.clientX, y: e.clientY };
+    };
     const onClick = (e: Event) => {
       e.preventDefault();
       e.stopPropagation();
@@ -858,14 +1132,44 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
         performRedo();
       }
     };
-    const onScroll = () => repositionSelectedOverlay();
-    const onResize = () => repositionSelectedOverlay();
+    const updateHoverFromLastPos = () => {
+      // Reposition hover overlay relative to current viewport position
+      const pos = lastHoverPosRef.current;
+      if (!pos) {
+        hideOverlay(hoverOverlayRef.current);
+        return;
+      }
+      const elAt = doc.elementFromPoint(pos.x, pos.y) as HTMLElement | null;
+      if (elAt && hoverOverlayRef.current) {
+        if (!(selectOverlayRef.current && styleTargetRef.current === elAt)) {
+          positionOverlay(elAt, hoverOverlayRef.current);
+        }
+      } else {
+        hideOverlay(hoverOverlayRef.current);
+      }
+    };
+    const onScroll = () => {
+      repositionSelectedOverlay();
+      updateHoverFromLastPos();
+    };
+    const onResize = () => {
+      repositionSelectedOverlay();
+      updateHoverFromLastPos();
+    };
+    const onWheel = () => {
+      // When user scrolls via wheel/trackpad inside any scrollable container,
+      // update overlays to follow moved content.
+      repositionSelectedOverlay();
+      updateHoverFromLastPos();
+    };
     doc.addEventListener("mouseover", onMouseOver, true);
     doc.addEventListener("mouseout", onMouseOut, true);
+    doc.addEventListener("mousemove", onMouseMove as any, true);
     doc.addEventListener("click", onClick, true);
     doc.addEventListener("keydown", onKeyDown as any, true);
     win.addEventListener("scroll", onScroll, true);
     win.addEventListener("resize", onResize, true);
+    doc.addEventListener("wheel", onWheel as any, { capture: true } as AddEventListenerOptions);
   };
 
   // Hide selection overlay when panel closes
@@ -1124,97 +1428,114 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
         </div>
       )}
 
-      {/* Right content area with preview (attached) */}
-      <div className="relative flex-1 h-full">
-        {sanitizedHTML ? (
-          <iframe
-            ref={iframeRef}
-            className="absolute inset-0 w-full h-full border-0 bg-white"
-            title="Portfolio Preview"
-            sandbox="allow-scripts allow-popups allow-forms allow-modals allow-pointer-lock allow-downloads allow-top-navigation-by-user-activation allow-popups-to-escape-sandbox allow-same-origin"
-          />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-            <div className="text-center">
-              <div className="text-6xl mb-4">📝</div>
-              <p className="text-xl">No content to preview</p>
-              <p className="text-sm mt-2">
-                Go back to editor and add some HTML code
-              </p>
+      {/* Center workspace with canvas (pan/zoom outside preview) */}
+      <div className="relative flex-1 h-full overflow-hidden">
+        <div
+          ref={workspaceRef}
+          className="absolute inset-0 overflow-hidden bg-[#0b0b0b]"
+          title="Use trackpad: scroll to pan, pinch to zoom (outside preview)"
+        >
+          {/* Visual grid background */}
+          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.08)_1px,transparent_1px)] bg-[length:18px_18px]" />
+          {/* Canvas container */}
+          <div ref={canvasRef} className="relative w-max h-max select-none">
+            {/* Frame wrapper - treated as 'preview area' */}
+            <div
+              ref={frameRef}
+              className="relative shadow-2xl ring-1 ring-white/10 bg-white rounded-md"
+              style={{ width: 1200, height: 800 }}
+            >
+              {sanitizedHTML ? (
+                <iframe
+                  ref={iframeRef}
+                  className="w-full h-full border-0 rounded-md bg-white"
+                  title="Portfolio Preview"
+                  sandbox="allow-scripts allow-popups allow-forms allow-modals allow-pointer-lock allow-downloads allow-top-navigation-by-user-activation allow-popups-to-escape-sandbox allow-same-origin"
+                />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-gray-400">
+                  <div className="text-center">
+                    <div className="text-6xl mb-4">📝</div>
+                    <p className="text-xl">No content to preview</p>
+                    <p className="text-sm mt-2">Go back to editor and add some HTML code</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-        )}
-
-        {/* Style Editor Panel */}
-        <StyleEditorPanel
-          visible={stylePanelVisible}
-          onClose={clearSelection}
-          styleTargetTag={styleTargetRef.current?.tagName.toLowerCase()}
-          inlineStyles={inlineStyles}
-          setInlineStyles={setInlineStyles}
-          applyInlineStyle={applyInlineStyle}
-          newProp={newProp}
-          setNewProp={setNewProp}
-          newVal={newVal}
-          setNewVal={setNewVal}
-          computedCollapsed={computedCollapsed}
-          setComputedCollapsed={setComputedCollapsed}
-          computedStyles={computedStyles}
-          qcText={qcText}
-          setQcText={setQcText}
-          applyQuickText={applyQuickText}
-          qcColor={qcColor}
-          setQcColor={setQcColor}
-          qcBg={qcBg}
-          setQcBg={setQcBg}
-          qcBorderColor={qcBorderColor}
-          setQcBorderColor={setQcBorderColor}
-          qcWidth={qcWidth}
-          setQcWidth={setQcWidth}
-          qcWidthUnit={qcWidthUnit}
-          setQcWidthUnit={setQcWidthUnit}
-          qcHeight={qcHeight}
-          setQcHeight={setQcHeight}
-          qcHeightUnit={qcHeightUnit}
-          setQcHeightUnit={setQcHeightUnit}
-          qcPad={qcPad}
-          setQcPad={setQcPad}
-          qcMar={qcMar}
-          setQcMar={setQcMar}
-          qcBorderWidth={qcBorderWidth}
-          setQcBorderWidth={setQcBorderWidth}
-          qcBorderWidthUnit={qcBorderWidthUnit}
-          setQcBorderWidthUnit={setQcBorderWidthUnit}
-          qcBorderStyle={qcBorderStyle}
-          setQcBorderStyle={setQcBorderStyle}
-          qcBorderRadius={qcBorderRadius}
-          setQcBorderRadius={setQcBorderRadius}
-          qcBorderRadiusUnit={qcBorderRadiusUnit}
-          setQcBorderRadiusUnit={setQcBorderRadiusUnit}
-          qcFontSize={qcFontSize}
-          setQcFontSize={setQcFontSize}
-          qcFontSizeUnit={qcFontSizeUnit}
-          setQcFontSizeUnit={setQcFontSizeUnit}
-          qcFontWeight={qcFontWeight}
-          setQcFontWeight={setQcFontWeight}
-          qcTextAlign={qcTextAlign}
-          setQcTextAlign={setQcTextAlign}
-          qcDisplay={qcDisplay}
-          setQcDisplay={setQcDisplay}
-          qcFlexDirection={qcFlexDirection}
-          setQcFlexDirection={setQcFlexDirection}
-          qcJustifyContent={qcJustifyContent}
-          setQcJustifyContent={setQcJustifyContent}
-          qcAlignItems={qcAlignItems}
-          setQcAlignItems={setQcAlignItems}
-          qcFlexWrap={qcFlexWrap}
-          setQcFlexWrap={setQcFlexWrap}
-          qcGap={qcGap}
-          setQcGap={setQcGap}
-          qcGapUnit={qcGapUnit}
-          setQcGapUnit={setQcGapUnit}
-        />
+        </div>
       </div>
+
+      {/* Right sidebar: Style Editor */}
+      <StyleEditorPanel
+        mode="sidebar"
+        visible={stylePanelVisible}
+        onClose={clearSelection}
+        styleTargetTag={styleTargetRef.current?.tagName.toLowerCase()}
+        inlineStyles={inlineStyles}
+        setInlineStyles={setInlineStyles}
+        applyInlineStyle={applyInlineStyle}
+        newProp={newProp}
+        setNewProp={setNewProp}
+        newVal={newVal}
+        setNewVal={setNewVal}
+        computedCollapsed={computedCollapsed}
+        setComputedCollapsed={setComputedCollapsed}
+        computedStyles={computedStyles}
+        qcText={qcText}
+        setQcText={setQcText}
+        applyQuickText={applyQuickText}
+        qcColor={qcColor}
+        setQcColor={setQcColor}
+        qcBg={qcBg}
+        setQcBg={setQcBg}
+        qcBorderColor={qcBorderColor}
+        setQcBorderColor={setQcBorderColor}
+        qcWidth={qcWidth}
+        setQcWidth={setQcWidth}
+        qcWidthUnit={qcWidthUnit}
+        setQcWidthUnit={setQcWidthUnit}
+        qcHeight={qcHeight}
+        setQcHeight={setQcHeight}
+        qcHeightUnit={qcHeightUnit}
+        setQcHeightUnit={setQcHeightUnit}
+        qcPad={qcPad}
+        setQcPad={setQcPad}
+        qcMar={qcMar}
+        setQcMar={setQcMar}
+        qcBorderWidth={qcBorderWidth}
+        setQcBorderWidth={setQcBorderWidth}
+        qcBorderWidthUnit={qcBorderWidthUnit}
+        setQcBorderWidthUnit={setQcBorderWidthUnit}
+        qcBorderStyle={qcBorderStyle}
+        setQcBorderStyle={setQcBorderStyle}
+        qcBorderRadius={qcBorderRadius}
+        setQcBorderRadius={setQcBorderRadius}
+        qcBorderRadiusUnit={qcBorderRadiusUnit}
+        setQcBorderRadiusUnit={setQcBorderRadiusUnit}
+        qcFontSize={qcFontSize}
+        setQcFontSize={setQcFontSize}
+        qcFontSizeUnit={qcFontSizeUnit}
+        setQcFontSizeUnit={setQcFontSizeUnit}
+        qcFontWeight={qcFontWeight}
+        setQcFontWeight={setQcFontWeight}
+        qcTextAlign={qcTextAlign}
+        setQcTextAlign={setQcTextAlign}
+        qcDisplay={qcDisplay}
+        setQcDisplay={setQcDisplay}
+        qcFlexDirection={qcFlexDirection}
+        setQcFlexDirection={setQcFlexDirection}
+        qcJustifyContent={qcJustifyContent}
+        setQcJustifyContent={setQcJustifyContent}
+        qcAlignItems={qcAlignItems}
+        setQcAlignItems={setQcAlignItems}
+        qcFlexWrap={qcFlexWrap}
+        setQcFlexWrap={setQcFlexWrap}
+        qcGap={qcGap}
+        setQcGap={setQcGap}
+        qcGapUnit={qcGapUnit}
+        setQcGapUnit={setQcGapUnit}
+      />
     </div>
   );
 };

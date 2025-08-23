@@ -24,3 +24,28 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Custom scrollbar for DOM tree */
+.domtree-scroll {
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: #0a0a0a transparent;
+}
+
+/* WebKit browsers */
+.domtree-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.domtree-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.domtree-scroll::-webkit-scrollbar-thumb {
+  background-color: #0a0a0a; /* black */
+  border-radius: 9999px; /* curved */
+  border: 2px solid transparent; /* to create inset spacing */
+  background-clip: padding-box;
+}
+.domtree-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #111111;
+}
