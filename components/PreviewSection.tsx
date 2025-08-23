@@ -3,7 +3,13 @@
 import { useState, useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
 import StyleEditorPanel from "./StyleEditorPanel";
-import { parseInline, parseUnit, rgbToHex, getComputed } from "../utils/styleUtils";
+import DomTree from "./DomTree";
+import {
+  parseInline,
+  parseUnit,
+  rgbToHex,
+  getComputed,
+} from "../utils/styleUtils";
 
 interface PreviewSectionProps {
   htmlCode: string;
@@ -16,6 +22,14 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   onBackToEditor,
   onCodeUpdate,
 }) => {
+  // Tree node type for DOM tree sidebar
+  type DomTreeNode = {
+    key: string;
+    label: string;
+    el: HTMLElement;
+    children: DomTreeNode[];
+  };
+
   const [sanitizedHTML, setSanitizedHTML] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [editingElement, setEditingElement] = useState<HTMLElement | null>(
@@ -26,6 +40,9 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   const [currentHtml, setCurrentHtml] = useState(htmlCode);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // DOM tree state
+  const [domTree, setDomTree] = useState<DomTreeNode | null>(null);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   // Style panel state
   const [stylePanelVisible, setStylePanelVisible] = useState(false);
   const styleTargetRef = useRef<HTMLElement | null>(null);
@@ -53,13 +70,23 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   const [qcWidthUnit, setQcWidthUnit] = useState<string>("px");
   const [qcHeight, setQcHeight] = useState<string>("");
   const [qcHeightUnit, setQcHeightUnit] = useState<string>("px");
-  const [qcPad, setQcPad] = useState<{ t: string; r: string; b: string; l: string }>({
+  const [qcPad, setQcPad] = useState<{
+    t: string;
+    r: string;
+    b: string;
+    l: string;
+  }>({
     t: "",
     r: "",
     b: "",
     l: "",
   });
-  const [qcMar, setQcMar] = useState<{ t: string; r: string; b: string; l: string }>({
+  const [qcMar, setQcMar] = useState<{
+    t: string;
+    r: string;
+    b: string;
+    l: string;
+  }>({
     t: "",
     r: "",
     b: "",
@@ -85,8 +112,48 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   // Quick text edit
   const [qcText, setQcText] = useState<string>("");
   const quickTextTargetRef = useRef<HTMLElement | null>(null);
+  // Insert modal state
+  const [insertModalOpen, setInsertModalOpen] = useState(false);
+  const insertParentRef = useRef<HTMLElement | null>(null);
+  const tagOptions = [
+    "div",
+    "p",
+    "span",
+    "h1",
+    "h2",
+    "h3",
+    "button",
+    "a",
+    "img",
+    "ul",
+    "ol",
+    "li",
+    "section",
+    "header",
+    "footer",
+    "nav",
+    "main",
+    "article",
+    "aside",
+    "input",
+    "textarea",
+  ];
   // Prevent iframe reload on internal updates
   const internalUpdateRef = useRef<boolean>(false);
+  // Context menu state for tree right-click
+  const [ctxMenuOpen, setCtxMenuOpen] = useState(false);
+  const [ctxMenuPos, setCtxMenuPos] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0,
+  });
+  const ctxTargetRef = useRef<HTMLElement | null>(null);
+  // Drag & drop (tree) state
+  const dragSourceRef = useRef<HTMLElement | null>(null);
+  // Undo/Redo stacks (store full HTML snapshots)
+  const undoStackRef = useRef<string[]>([]);
+  const redoStackRef = useRef<string[]>([]);
+  // For inline editing: snapshot taken at edit start, only committed on save
+  const pendingEditSnapshotRef = useRef<string | null>(null);
 
   useEffect(() => {
     // Sanitize while allowing full-document HTML and scripts/styles for previewing user content
@@ -142,28 +209,319 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
         // Add editing functionality after the content loads
         setTimeout(() => {
           addEditingListeners(iframeDoc);
+          // Build initial DOM tree for sidebar
+          try {
+            refreshDomTreeFromDoc(iframeDoc);
+          } catch {}
         }, 100);
       }
     }
   }, [sanitizedHTML]);
 
+  // Helpers for delete/clear inline styles
+  const deleteElementAndRefresh = (el: HTMLElement | null) => {
+    if (!el) return;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "html" || tag === "body") return;
+    const doc = (el.ownerDocument || document) as Document;
+    // snapshot before mutation
+    try {
+      undoStackRef.current.push(doc.documentElement.outerHTML);
+      redoStackRef.current = [];
+    } catch {}
+    try {
+      el.parentElement?.removeChild(el);
+    } catch {}
+    if (styleTargetRef.current === el) clearSelection();
+    scheduleUpdateHtml();
+    refreshDomTreeFromDoc(doc);
+  };
+
+  const clearInlineStylesOn = (el: HTMLElement | null) => {
+    if (!el) return;
+    const doc = (el.ownerDocument || document) as Document;
+    try {
+      undoStackRef.current.push(doc.documentElement.outerHTML);
+      redoStackRef.current = [];
+    } catch {}
+    el.removeAttribute("style");
+    if (styleTargetRef.current === el) {
+      setInlineStyles(parseInline(el.getAttribute("style")));
+      refreshComputedStyles(el);
+    }
+    scheduleUpdateHtml();
+  };
+
+  const openContextMenu = (el: HTMLElement, x: number, y: number) => {
+    ctxTargetRef.current = el;
+    setCtxMenuPos({ x, y });
+    setCtxMenuOpen(true);
+  };
+  const closeContextMenu = () => setCtxMenuOpen(false);
+
   useEffect(() => {
     const handler = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", handler);
-    const escHandler = (e: KeyboardEvent) => {
+    const keyHandler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
         clearSelection();
+      } else if (e.key === "Delete") {
+        e.preventDefault();
+        deleteElementAndRefresh(styleTargetRef.current);
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          performRedo();
+        } else {
+          performUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) {
+        e.preventDefault();
+        performRedo();
       }
     };
-    document.addEventListener("keydown", escHandler, true);
+    document.addEventListener("keydown", keyHandler, true);
     return () => {
       document.removeEventListener("fullscreenchange", handler);
-      document.removeEventListener("keydown", escHandler, true);
+      document.removeEventListener("keydown", keyHandler, true);
     };
   }, []);
 
   // Helpers for style panel
+
+  // ======== DOM tree helpers ========
+  const elementLabel = (el: Element) => {
+    // Show only tag name as requested
+    const tag = el.tagName.toLowerCase();
+    return tag;
+  };
+
+  const buildTreeFromElement = (el: Element, keyPath: string): DomTreeNode => {
+    const children: DomTreeNode[] = [];
+    let idx = 0;
+    const excluded = new Set(["script", "style", "title"]);
+    for (const child of Array.from(el.children)) {
+      const tag = (child as Element).tagName.toLowerCase();
+      if (excluded.has(tag)) continue;
+      const childKey = `${keyPath}/${tag}[${idx}]`;
+      children.push(buildTreeFromElement(child as Element, childKey));
+      idx++;
+    }
+    return {
+      key: keyPath,
+      label: elementLabel(el),
+      el: el as HTMLElement,
+      children,
+    };
+  };
+
+  const refreshDomTreeFromDoc = (doc: Document) => {
+    const root = (doc.body || doc.documentElement) as HTMLElement;
+    const rootKey =
+      root.tagName.toLowerCase() === "body" ? "body[0]" : "html[0]";
+    const tree = buildTreeFromElement(root, rootKey);
+    setDomTree(tree);
+    // Expand root and its immediate children only on first build
+    setExpandedKeys((prev) => {
+      if (prev.size > 0) return prev;
+      const initial = new Set<string>([
+        tree.key,
+        ...tree.children.map((c) => c.key),
+      ]);
+      return initial;
+    });
+  };
+
+  const openInsertModal = (parentEl: HTMLElement) => {
+    insertParentRef.current = parentEl;
+    setInsertModalOpen(true);
+  };
+
+  const closeInsertModal = () => setInsertModalOpen(false);
+
+  const insertTagIntoParent = (tag: string) => {
+    const parent = insertParentRef.current;
+    if (!parent) return;
+    const doc = (parent.ownerDocument || document) as Document;
+    try {
+      // snapshot before mutation
+      try {
+        undoStackRef.current.push(doc.documentElement.outerHTML);
+        redoStackRef.current = [];
+      } catch {}
+      const el = doc.createElement(tag);
+      switch (tag) {
+        case "img":
+          el.setAttribute("src", "https://via.placeholder.com/150");
+          el.setAttribute("alt", "image");
+          (el as HTMLElement).style.display = "block";
+          (el as HTMLElement).style.width = "150px";
+          (el as HTMLElement).style.height = "150px";
+          break;
+        case "a":
+          (el as HTMLElement).textContent = "Link";
+          (el as HTMLAnchorElement).href = "#";
+          break;
+        case "button":
+          (el as HTMLElement).textContent = "Button";
+          break;
+        case "ul":
+        case "ol": {
+          const li = doc.createElement("li");
+          li.textContent = "Item";
+          el.appendChild(li);
+          break;
+        }
+        case "input":
+          (el as HTMLInputElement).type = "text";
+          (el as HTMLInputElement).placeholder = "input";
+          break;
+        case "textarea":
+          (el as HTMLTextAreaElement).placeholder = "textarea";
+          break;
+        default: {
+          const headings = ["h1", "h2", "h3", "h4", "h5", "h6"];
+          if (headings.includes(tag)) {
+            (el as HTMLElement).textContent = `${tag.toUpperCase()} heading`;
+          } else if (
+            [
+              "p",
+              "span",
+              "div",
+              "li",
+              "section",
+              "header",
+              "footer",
+              "nav",
+              "main",
+              "article",
+              "aside",
+            ].includes(tag)
+          ) {
+            (el as HTMLElement).textContent = `New ${tag}`;
+          }
+        }
+      }
+      parent.appendChild(el);
+      // Update code and tree while preserving expansion
+      scheduleUpdateHtml();
+      refreshDomTreeFromDoc(doc);
+    } catch {}
+    setInsertModalOpen(false);
+  };
+
+  // ======== Drag & Drop handlers for DOM tree ========
+  const handleTreeDragStart = (el: HTMLElement) => {
+    dragSourceRef.current = el;
+  };
+
+  const handleTreeDragEnd = () => {
+    dragSourceRef.current = null;
+  };
+
+  const handleTreeDropOn = (
+    targetEl: HTMLElement,
+    position: "before" | "after"
+  ) => {
+    const src = dragSourceRef.current;
+    if (!src) return;
+    // Disallow no-op or illegal moves
+    if (src === targetEl) {
+      dragSourceRef.current = null;
+      return;
+    }
+    const srcTag = src.tagName.toLowerCase();
+    if (srcTag === "html" || srcTag === "body") {
+      dragSourceRef.current = null;
+      return;
+    }
+    // Must be sibling-only reordering
+    const parentA = src.parentElement;
+    const parentB = targetEl.parentElement;
+    if (!parentA || parentA !== parentB) {
+      dragSourceRef.current = null;
+      return;
+    }
+    // Prevent moving a parent into its own descendant (shouldn't happen for siblings, but safe-guard)
+    if (src.contains(targetEl)) {
+      dragSourceRef.current = null;
+      return;
+    }
+    const doc = (targetEl.ownerDocument || document) as Document;
+    // snapshot before mutation
+    try {
+      undoStackRef.current.push(doc.documentElement.outerHTML);
+      redoStackRef.current = [];
+    } catch {}
+    try {
+      if (position === "before") {
+        parentA.insertBefore(src, targetEl);
+      } else {
+        parentA.insertBefore(src, targetEl.nextSibling);
+      }
+    } catch {}
+    // Update code and rebuild tree
+    scheduleUpdateHtml();
+    refreshDomTreeFromDoc(doc);
+    // Auto-select moved element in style panel
+    openStylePanelFor(src);
+    dragSourceRef.current = null;
+  };
+
+  // ======== Undo/Redo ========
+  const applyHtmlToIframe = (html: string) => {
+    const iframe = iframeRef.current;
+    const iframeDoc =
+      iframe?.contentDocument || iframe?.contentWindow?.document;
+    if (!iframeDoc) return;
+    try {
+      iframeDoc.open();
+      iframeDoc.write(html);
+      iframeDoc.close();
+    } catch {}
+    // reinitialize listeners and tree
+    setTimeout(() => {
+      try {
+        addEditingListeners(iframeDoc);
+      } catch {}
+      try {
+        refreshDomTreeFromDoc(iframeDoc);
+      } catch {}
+    }, 50);
+    // propagate to code without reloading iframe again
+    internalUpdateRef.current = true;
+    setCurrentHtml(html);
+    onCodeUpdate(html);
+  };
+
+  const performUndo = () => {
+    const prev = undoStackRef.current.pop();
+    if (!prev) return;
+    // push current to redo
+    try {
+      if (iframeRef.current?.contentDocument) {
+        const cur = iframeRef.current.contentDocument.documentElement.outerHTML;
+        redoStackRef.current.push(cur);
+      }
+    } catch {}
+    applyHtmlToIframe(prev);
+    clearSelection();
+  };
+
+  const performRedo = () => {
+    const next = redoStackRef.current.pop();
+    if (!next) return;
+    // push current to undo
+    try {
+      if (iframeRef.current?.contentDocument) {
+        const cur = iframeRef.current.contentDocument.documentElement.outerHTML;
+        undoStackRef.current.push(cur);
+      }
+    } catch {}
+    applyHtmlToIframe(next);
+    clearSelection();
+  };
 
   const scheduleUpdateHtml = () => {
     if (updateTimerRef.current) {
@@ -206,6 +564,12 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     const el = styleTargetRef.current;
     if (!el) return;
     if (!prop) return;
+    // snapshot before style mutation
+    try {
+      const doc = (el.ownerDocument || document) as Document;
+      undoStackRef.current.push(doc.documentElement.outerHTML);
+      redoStackRef.current = [];
+    } catch {}
     if (value === "") {
       el.style.removeProperty(prop);
     } else {
@@ -220,6 +584,7 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     scheduleUpdateHtml();
     // keep selection overlay in sync with size changes
     repositionSelectedOverlay();
+    // DOM tree may need refresh if structure changed (rare for style changes)
   };
 
   // ========= Overlay helpers =========
@@ -250,7 +615,11 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     }
   };
 
-  const positionOverlay = (el: HTMLElement, overlay: HTMLDivElement, color?: string) => {
+  const positionOverlay = (
+    el: HTMLElement,
+    overlay: HTMLDivElement,
+    color?: string
+  ) => {
     const rect = el.getBoundingClientRect();
     const doc = el.ownerDocument as Document;
     const win = doc.defaultView as Window;
@@ -291,8 +660,10 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     // Size
     const { num: wNum, unit: wUnit } = parseUnit(getComputed(el, "width"));
     const { num: hNum, unit: hUnit } = parseUnit(getComputed(el, "height"));
-    setQcWidth(wNum); setQcWidthUnit(wUnit);
-    setQcHeight(hNum); setQcHeightUnit(hUnit);
+    setQcWidth(wNum);
+    setQcWidthUnit(wUnit);
+    setQcHeight(hNum);
+    setQcHeightUnit(hUnit);
     // Spacing
     setQcPad({
       t: parseUnit(getComputed(el, "padding-top")).num,
@@ -311,7 +682,9 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     setQcBorderWidthUnit(parseUnit(getComputed(el, "border-top-width")).unit);
     setQcBorderStyle(getComputed(el, "border-top-style") || "none");
     setQcBorderRadius(parseUnit(getComputed(el, "border-top-left-radius")).num);
-    setQcBorderRadiusUnit(parseUnit(getComputed(el, "border-top-left-radius")).unit);
+    setQcBorderRadiusUnit(
+      parseUnit(getComputed(el, "border-top-left-radius")).unit
+    );
     // Typography
     setQcFontSize(parseUnit(getComputed(el, "font-size")).num);
     setQcFontSizeUnit(parseUnit(getComputed(el, "font-size")).unit);
@@ -336,7 +709,10 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
         if (result) return result;
       }
       for (const node of Array.from(root.childNodes)) {
-        if (node.nodeType === Node.TEXT_NODE && (node.textContent?.trim() || "")) {
+        if (
+          node.nodeType === Node.TEXT_NODE &&
+          (node.textContent?.trim() || "")
+        ) {
           const span = (doc as Document).createElement("span");
           span.textContent = node.textContent || "";
           root.replaceChild(span, node);
@@ -364,6 +740,12 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   const applyQuickText = (text: string) => {
     const tgt = quickTextTargetRef.current || styleTargetRef.current;
     if (!tgt) return;
+    // snapshot before text mutation
+    try {
+      const doc = (tgt.ownerDocument || document) as Document;
+      undoStackRef.current.push(doc.documentElement.outerHTML);
+      redoStackRef.current = [];
+    } catch {}
     try {
       tgt.textContent = text;
     } catch {}
@@ -440,9 +822,14 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       e.stopPropagation();
       const t = e.target as HTMLElement;
       if (!t || !(t instanceof win.HTMLElement)) return;
-      // Click on document root or body clears selection
+      // Click on document root or body selects the top container (body) with toggle behavior
       if (t === doc.documentElement || t === doc.body) {
-        clearSelection();
+        const bodyEl = (doc.body as HTMLElement) || (doc.documentElement as HTMLElement);
+        if (styleTargetRef.current === bodyEl) {
+          clearSelection();
+        } else {
+          openStylePanelFor(bodyEl);
+        }
         return;
       }
       // Toggle off when clicking the same selected element
@@ -456,6 +843,19 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
       if (e.key === "Escape") {
         e.preventDefault();
         clearSelection();
+      } else if (e.key === "Delete") {
+        e.preventDefault();
+        deleteElementAndRefresh(styleTargetRef.current);
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          performRedo();
+        } else {
+          performUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) {
+        e.preventDefault();
+        performRedo();
       }
     };
     const onScroll = () => repositionSelectedOverlay();
@@ -519,6 +919,11 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     }
 
     setOriginalHTML(targetEl.innerHTML);
+    // Capture a pending snapshot of the whole document before any text changes
+    try {
+      const docHtml = (doc as Document).documentElement.outerHTML;
+      pendingEditSnapshotRef.current = docHtml;
+    } catch {}
 
     // Inline editing on the selected target only
     targetEl.setAttribute("contenteditable", "plaintext-only");
@@ -564,6 +969,12 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
 
     const saveEdit = () => {
       cleanup();
+      // Commit the pending snapshot to undo stack and clear redo
+      if (pendingEditSnapshotRef.current) {
+        undoStackRef.current.push(pendingEditSnapshotRef.current);
+        redoStackRef.current = [];
+        pendingEditSnapshotRef.current = null;
+      }
       updateHtmlCode();
       clearSelection();
     };
@@ -571,6 +982,8 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
     const cancelEdit = () => {
       targetEl.innerHTML = originalHTML;
       cleanup();
+      // discard pending snapshot on cancel
+      pendingEditSnapshotRef.current = null;
       clearSelection();
     };
 
@@ -618,78 +1031,190 @@ const PreviewSection: React.FC<PreviewSectionProps> = ({
   };
 
   return (
-    <div ref={containerRef} className="relative h-screen w-screen bg-gray-950">
-      {/* Full-screen preview layer */}
-      {sanitizedHTML ? (
-        <iframe
-          ref={iframeRef}
-          className="absolute inset-0 w-full h-full border-0 bg-white"
-          title="Portfolio Preview"
-          sandbox="allow-scripts allow-popups allow-forms allow-modals allow-pointer-lock allow-downloads allow-top-navigation-by-user-activation allow-popups-to-escape-sandbox allow-same-origin"
-        />
-      ) : (
-        <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-          <div className="text-center">
-            <div className="text-6xl mb-4">📝</div>
-            <p className="text-xl">No content to preview</p>
-            <p className="text-sm mt-2">Go back to editor and add some HTML code</p>
+    <div
+      ref={containerRef}
+      className="relative h-screen w-screen bg-gray-950 flex"
+    >
+      {/* Left DOM Tree Sidebar (static attached) */}
+      <DomTree
+        tree={domTree}
+        expandedKeys={expandedKeys}
+        onToggle={(key) => {
+          setExpandedKeys((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+          });
+        }}
+        onSelect={(el) => openStylePanelFor(el)}
+        selectedEl={styleTargetRef.current}
+        onRequestInsert={openInsertModal}
+        onContextMenu={(el, x, y) => openContextMenu(el, x, y)}
+        onDragStart={handleTreeDragStart}
+        onDragEnd={handleTreeDragEnd}
+        onDrop={(el, pos) => handleTreeDropOn(el, pos)}
+      />
+
+      {/* Context Menu */}
+      {ctxMenuOpen && (
+        <div className="fixed inset-0 z-[130]" onClick={closeContextMenu}>
+          <div
+            className="absolute min-w-40 rounded-md border border-white/10 bg-[#111] text-sm text-gray-100 shadow-xl"
+            style={{ left: ctxMenuPos.x + 4, top: ctxMenuPos.y + 4 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="w-full text-left px-3 py-2 hover:bg-white/10"
+              onClick={() => {
+                deleteElementAndRefresh(ctxTargetRef.current);
+                closeContextMenu();
+              }}
+            >
+              Delete element
+            </button>
+            <button
+              className="w-full text-left px-3 py-2 hover:bg-white/10"
+              onClick={() => {
+                clearInlineStylesOn(ctxTargetRef.current);
+                closeContextMenu();
+              }}
+            >
+              Clear inline styles
+            </button>
           </div>
         </div>
       )}
 
-      {/* Style Editor Panel */}
-      <StyleEditorPanel
-        visible={stylePanelVisible}
-        onClose={clearSelection}
-        styleTargetTag={styleTargetRef.current?.tagName.toLowerCase()}
+      {/* Insert Modal */}
+      {insertModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-start justify-center">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={closeInsertModal}
+          />
+          <div className="relative mt-16 w-[520px] max-w-[90vw] rounded-lg border border-white/10 bg-[#111] text-gray-100 shadow-xl">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 text-sm font-semibold">
+              Insert element
+              <button
+                className="text-gray-400 hover:text-white"
+                onClick={closeInsertModal}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-3">
+              <div className="text-xs text-gray-400 mb-2">
+                Choose a tag to insert inside the selected div
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {tagOptions.map((t) => (
+                  <button
+                    key={t}
+                    className="px-2 py-1 rounded-md border border-white/10 hover:bg-white/10 text-xs"
+                    onClick={() => insertTagIntoParent(t)}
+                    title={`Insert <${t}>`}
+                  >
+                    {`<${t}>`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
-        inlineStyles={inlineStyles}
-        setInlineStyles={setInlineStyles}
-        applyInlineStyle={applyInlineStyle}
-        newProp={newProp}
-        setNewProp={setNewProp}
-        newVal={newVal}
-        setNewVal={setNewVal}
+      {/* Right content area with preview (attached) */}
+      <div className="relative flex-1 h-full">
+        {sanitizedHTML ? (
+          <iframe
+            ref={iframeRef}
+            className="absolute inset-0 w-full h-full border-0 bg-white"
+            title="Portfolio Preview"
+            sandbox="allow-scripts allow-popups allow-forms allow-modals allow-pointer-lock allow-downloads allow-top-navigation-by-user-activation allow-popups-to-escape-sandbox allow-same-origin"
+          />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center text-gray-400">
+            <div className="text-center">
+              <div className="text-6xl mb-4">📝</div>
+              <p className="text-xl">No content to preview</p>
+              <p className="text-sm mt-2">
+                Go back to editor and add some HTML code
+              </p>
+            </div>
+          </div>
+        )}
 
-        computedCollapsed={computedCollapsed}
-        setComputedCollapsed={setComputedCollapsed}
-        computedStyles={computedStyles}
-
-        qcText={qcText}
-        setQcText={setQcText}
-        applyQuickText={applyQuickText}
-
-        qcColor={qcColor} setQcColor={setQcColor}
-        qcBg={qcBg} setQcBg={setQcBg}
-        qcBorderColor={qcBorderColor} setQcBorderColor={setQcBorderColor}
-
-        qcWidth={qcWidth} setQcWidth={setQcWidth}
-        qcWidthUnit={qcWidthUnit} setQcWidthUnit={setQcWidthUnit}
-        qcHeight={qcHeight} setQcHeight={setQcHeight}
-        qcHeightUnit={qcHeightUnit} setQcHeightUnit={setQcHeightUnit}
-
-        qcPad={qcPad} setQcPad={setQcPad}
-        qcMar={qcMar} setQcMar={setQcMar}
-
-        qcBorderWidth={qcBorderWidth} setQcBorderWidth={setQcBorderWidth}
-        qcBorderWidthUnit={qcBorderWidthUnit} setQcBorderWidthUnit={setQcBorderWidthUnit}
-        qcBorderStyle={qcBorderStyle} setQcBorderStyle={setQcBorderStyle}
-        qcBorderRadius={qcBorderRadius} setQcBorderRadius={setQcBorderRadius}
-        qcBorderRadiusUnit={qcBorderRadiusUnit} setQcBorderRadiusUnit={setQcBorderRadiusUnit}
-
-        qcFontSize={qcFontSize} setQcFontSize={setQcFontSize}
-        qcFontSizeUnit={qcFontSizeUnit} setQcFontSizeUnit={setQcFontSizeUnit}
-        qcFontWeight={qcFontWeight} setQcFontWeight={setQcFontWeight}
-        qcTextAlign={qcTextAlign} setQcTextAlign={setQcTextAlign}
-
-        qcDisplay={qcDisplay} setQcDisplay={setQcDisplay}
-        qcFlexDirection={qcFlexDirection} setQcFlexDirection={setQcFlexDirection}
-        qcJustifyContent={qcJustifyContent} setQcJustifyContent={setQcJustifyContent}
-        qcAlignItems={qcAlignItems} setQcAlignItems={setQcAlignItems}
-        qcFlexWrap={qcFlexWrap} setQcFlexWrap={setQcFlexWrap}
-        qcGap={qcGap} setQcGap={setQcGap}
-        qcGapUnit={qcGapUnit} setQcGapUnit={setQcGapUnit}
-      />
+        {/* Style Editor Panel */}
+        <StyleEditorPanel
+          visible={stylePanelVisible}
+          onClose={clearSelection}
+          styleTargetTag={styleTargetRef.current?.tagName.toLowerCase()}
+          inlineStyles={inlineStyles}
+          setInlineStyles={setInlineStyles}
+          applyInlineStyle={applyInlineStyle}
+          newProp={newProp}
+          setNewProp={setNewProp}
+          newVal={newVal}
+          setNewVal={setNewVal}
+          computedCollapsed={computedCollapsed}
+          setComputedCollapsed={setComputedCollapsed}
+          computedStyles={computedStyles}
+          qcText={qcText}
+          setQcText={setQcText}
+          applyQuickText={applyQuickText}
+          qcColor={qcColor}
+          setQcColor={setQcColor}
+          qcBg={qcBg}
+          setQcBg={setQcBg}
+          qcBorderColor={qcBorderColor}
+          setQcBorderColor={setQcBorderColor}
+          qcWidth={qcWidth}
+          setQcWidth={setQcWidth}
+          qcWidthUnit={qcWidthUnit}
+          setQcWidthUnit={setQcWidthUnit}
+          qcHeight={qcHeight}
+          setQcHeight={setQcHeight}
+          qcHeightUnit={qcHeightUnit}
+          setQcHeightUnit={setQcHeightUnit}
+          qcPad={qcPad}
+          setQcPad={setQcPad}
+          qcMar={qcMar}
+          setQcMar={setQcMar}
+          qcBorderWidth={qcBorderWidth}
+          setQcBorderWidth={setQcBorderWidth}
+          qcBorderWidthUnit={qcBorderWidthUnit}
+          setQcBorderWidthUnit={setQcBorderWidthUnit}
+          qcBorderStyle={qcBorderStyle}
+          setQcBorderStyle={setQcBorderStyle}
+          qcBorderRadius={qcBorderRadius}
+          setQcBorderRadius={setQcBorderRadius}
+          qcBorderRadiusUnit={qcBorderRadiusUnit}
+          setQcBorderRadiusUnit={setQcBorderRadiusUnit}
+          qcFontSize={qcFontSize}
+          setQcFontSize={setQcFontSize}
+          qcFontSizeUnit={qcFontSizeUnit}
+          setQcFontSizeUnit={setQcFontSizeUnit}
+          qcFontWeight={qcFontWeight}
+          setQcFontWeight={setQcFontWeight}
+          qcTextAlign={qcTextAlign}
+          setQcTextAlign={setQcTextAlign}
+          qcDisplay={qcDisplay}
+          setQcDisplay={setQcDisplay}
+          qcFlexDirection={qcFlexDirection}
+          setQcFlexDirection={setQcFlexDirection}
+          qcJustifyContent={qcJustifyContent}
+          setQcJustifyContent={setQcJustifyContent}
+          qcAlignItems={qcAlignItems}
+          setQcAlignItems={setQcAlignItems}
+          qcFlexWrap={qcFlexWrap}
+          setQcFlexWrap={setQcFlexWrap}
+          qcGap={qcGap}
+          setQcGap={setQcGap}
+          qcGapUnit={qcGapUnit}
+          setQcGapUnit={setQcGapUnit}
+        />
+      </div>
     </div>
   );
 };

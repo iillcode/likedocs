@@ -72,7 +72,7 @@ const StyleEditorPanel: React.FC<StyleEditorPanelProps> = (props) => {
   const tagLabel = props.styleTargetTag ? `- <${props.styleTargetTag}>` : "";
 
   return (
-    <div className="absolute inset-x-2 bottom-2 w-[calc(100vw-16px)] sm:inset-auto sm:bottom-4 sm:right-4 sm:w-[420px] md:w-[460px] max-h-[72vh] rounded-2xl border border-white/10 bg-[#101010]/95 backdrop-blur-xl shadow-2xl text-gray-100 flex flex-col overflow-hidden">
+    <div className="absolute inset-x-2 bottom-2 sm:inset-auto sm:bottom-4 sm:right-4 sm:w-[420px] md:w-[460px] max-h-[72vh] rounded-2xl border border-white/10 bg-[#101010]/95 backdrop-blur-xl shadow-2xl text-gray-100 flex flex-col overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 bg-[#0d0d0d] border-b border-white/10 text-white">
         <div className="text-sm font-semibold">Style editor {tagLabel}</div>
         <button className="text-white/80 hover:text-white text-lg leading-none rounded-md p-1 hover:bg-white/5 transition" onClick={props.onClose}>×</button>
