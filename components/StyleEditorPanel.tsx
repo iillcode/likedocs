@@ -10,6 +10,18 @@ import TypographySection from "./style-editor/TypographySection";
 import InlineStylesSection from "./style-editor/InlineStylesSection";
 import MediaQueriesSection from "./style-editor/MediaQueriesSection";
 import ComputedStylesSection from "./style-editor/ComputedStylesSection";
+import {
+  ChevronDown,
+  Wand2,
+  LayoutDashboard,
+  Box,
+  Ruler,
+  Square,
+  Type as TypeIcon,
+  Code2,
+  MonitorSmartphone,
+  List,
+} from "lucide-react";
 
 interface KV {
   prop: string;
@@ -124,6 +136,34 @@ interface StyleEditorPanelProps {
   onDeleteMqProp: (id: string) => void;
 }
 
+// Lightweight accordion section for fast interactions
+const Section: React.FC<{
+  title: string;
+  icon: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}> = ({ title, icon, defaultOpen = false, children }) => {
+  const [open, setOpen] = useState<boolean>(defaultOpen);
+  return (
+    <div className="border border-white/10 rounded-xl overflow-hidden bg-white/5">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 hover:bg-white/10 transition-colors"
+      >
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <span className="inline-flex items-center justify-center size-5 rounded-md bg-white/10 text-white/90">
+            {icon}
+          </span>
+          <span>{title}</span>
+        </div>
+        <ChevronDown className={["size-4 transition-transform", open ? "rotate-180" : ""].join(" ")} />
+      </button>
+      <div className={open ? "px-3 pb-3 pt-1" : "hidden"}>{children}</div>
+    </div>
+  );
+};
+
 const StyleEditorPanel: React.FC<StyleEditorPanelProps> = (props) => {
   if (!props.visible) return null;
   const sidebar = props.mode === "sidebar";
@@ -173,117 +213,139 @@ const StyleEditorPanel: React.FC<StyleEditorPanelProps> = (props) => {
 
       <div
         className={[
-          "p-2 space-y-6 overflow-auto",
+          "p-2 space-y-3 overflow-auto",
           sidebar ? "flex-1" : "",
         ].join(" ")}
       >
-        <QuickEditSection
-          qcText={props.qcText}
-          setQcText={props.setQcText}
-          applyQuickText={props.applyQuickText}
-          qcColor={props.qcColor}
-          setQcColor={props.setQcColor}
-          qcBg={props.qcBg}
-          setQcBg={props.setQcBg}
-          qcBorderColor={props.qcBorderColor}
-          setQcBorderColor={props.setQcBorderColor}
-          applyInlineStyle={props.applyInlineStyle}
-          onClose={props.onClose}
-        />
+        <Section
+          title="Quick Edits (Text & Colors)"
+          icon={<Wand2 className="size-4" />}
+          defaultOpen
+        >
+          <QuickEditSection
+            qcText={props.qcText}
+            setQcText={props.setQcText}
+            applyQuickText={props.applyQuickText}
+            qcColor={props.qcColor}
+            setQcColor={props.setQcColor}
+            qcBg={props.qcBg}
+            setQcBg={props.setQcBg}
+            qcBorderColor={props.qcBorderColor}
+            setQcBorderColor={props.setQcBorderColor}
+            applyInlineStyle={props.applyInlineStyle}
+            onClose={props.onClose}
+          />
+        </Section>
 
-        <LayoutSection
-          qcDisplay={props.qcDisplay}
-          setQcDisplay={props.setQcDisplay}
-          qcFlexDirection={props.qcFlexDirection}
-          setQcFlexDirection={props.setQcFlexDirection}
-          qcJustifyContent={props.qcJustifyContent}
-          setQcJustifyContent={props.setQcJustifyContent}
-          qcAlignItems={props.qcAlignItems}
-          setQcAlignItems={props.setQcAlignItems}
-          qcFlexWrap={props.qcFlexWrap}
-          setQcFlexWrap={props.setQcFlexWrap}
-          applyInlineStyle={props.applyInlineStyle}
-        />
+        <Section title="Layout" icon={<LayoutDashboard className="size-4" />}>
+          <LayoutSection
+            qcDisplay={props.qcDisplay}
+            setQcDisplay={props.setQcDisplay}
+            qcFlexDirection={props.qcFlexDirection}
+            setQcFlexDirection={props.setQcFlexDirection}
+            qcJustifyContent={props.qcJustifyContent}
+            setQcJustifyContent={props.setQcJustifyContent}
+            qcAlignItems={props.qcAlignItems}
+            setQcAlignItems={props.setQcAlignItems}
+            qcFlexWrap={props.qcFlexWrap}
+            setQcFlexWrap={props.setQcFlexWrap}
+            applyInlineStyle={props.applyInlineStyle}
+          />
+        </Section>
 
-        <SpacingSection
-          qcGap={props.qcGap}
-          setQcGap={props.setQcGap}
-          debouncedApplyInlineStyle={debouncedApplyInlineStyle}
-          qcPad={props.qcPad}
-          setQcPad={props.setQcPad}
-          applyInlineStyle={props.applyInlineStyle}
-          qcMar={props.qcMar}
-          setQcMar={props.setQcMar}
-        />
+        <Section title="Spacing" icon={<Box className="size-4" />}>
+          <SpacingSection
+            qcGap={props.qcGap}
+            setQcGap={props.setQcGap}
+            debouncedApplyInlineStyle={debouncedApplyInlineStyle}
+            qcPad={props.qcPad}
+            setQcPad={props.setQcPad}
+            applyInlineStyle={props.applyInlineStyle}
+            qcMar={props.qcMar}
+            setQcMar={props.setQcMar}
+          />
+        </Section>
 
-        <SizeSection
-          qcWidth={props.qcWidth}
-          setQcWidth={props.setQcWidth}
-          qcWidthUnit={props.qcWidthUnit}
-          setQcWidthUnit={props.setQcWidthUnit}
-          qcHeight={props.qcHeight}
-          setQcHeight={props.setQcHeight}
-          qcHeightUnit={props.qcHeightUnit}
-          setQcHeightUnit={props.setQcHeightUnit}
-          applyInlineStyle={props.applyInlineStyle}
-          debouncedApplyInlineStyle={debouncedApplyInlineStyle}
-        />
+        <Section title="Size" icon={<Ruler className="size-4" />}>
+          <SizeSection
+            qcWidth={props.qcWidth}
+            setQcWidth={props.setQcWidth}
+            qcWidthUnit={props.qcWidthUnit}
+            setQcWidthUnit={props.setQcWidthUnit}
+            qcHeight={props.qcHeight}
+            setQcHeight={props.setQcHeight}
+            qcHeightUnit={props.qcHeightUnit}
+            setQcHeightUnit={props.setQcHeightUnit}
+            applyInlineStyle={props.applyInlineStyle}
+            debouncedApplyInlineStyle={debouncedApplyInlineStyle}
+          />
+        </Section>
 
-        <BorderSection
-          qcBorderWidth={props.qcBorderWidth}
-          setQcBorderWidth={props.setQcBorderWidth}
-          qcBorderWidthUnit={props.qcBorderWidthUnit}
-          setQcBorderWidthUnit={props.setQcBorderWidthUnit}
-          qcBorderStyle={props.qcBorderStyle}
-          setQcBorderStyle={props.setQcBorderStyle}
-          qcBorderRadius={props.qcBorderRadius}
-          setQcBorderRadius={props.setQcBorderRadius}
-          qcBorderRadiusUnit={props.qcBorderRadiusUnit}
-          setQcBorderRadiusUnit={props.setQcBorderRadiusUnit}
-          applyInlineStyle={props.applyInlineStyle}
-          debouncedApplyInlineStyle={debouncedApplyInlineStyle}
-        />
+        <Section title="Borders" icon={<Square className="size-4" />}>
+          <BorderSection
+            qcBorderWidth={props.qcBorderWidth}
+            setQcBorderWidth={props.setQcBorderWidth}
+            qcBorderWidthUnit={props.qcBorderWidthUnit}
+            setQcBorderWidthUnit={props.setQcBorderWidthUnit}
+            qcBorderStyle={props.qcBorderStyle}
+            setQcBorderStyle={props.setQcBorderStyle}
+            qcBorderRadius={props.qcBorderRadius}
+            setQcBorderRadius={props.setQcBorderRadius}
+            qcBorderRadiusUnit={props.qcBorderRadiusUnit}
+            setQcBorderRadiusUnit={props.setQcBorderRadiusUnit}
+            applyInlineStyle={props.applyInlineStyle}
+            debouncedApplyInlineStyle={debouncedApplyInlineStyle}
+          />
+        </Section>
 
-        <TypographySection
-          qcFontSize={props.qcFontSize}
-          setQcFontSize={props.setQcFontSize}
-          qcFontSizeUnit={props.qcFontSizeUnit}
-          setQcFontSizeUnit={props.setQcFontSizeUnit}
-          qcFontWeight={props.qcFontWeight}
-          setQcFontWeight={props.setQcFontWeight}
-          qcTextAlign={props.qcTextAlign}
-          setQcTextAlign={props.setQcTextAlign}
-          applyInlineStyle={props.applyInlineStyle}
-          debouncedApplyInlineStyle={debouncedApplyInlineStyle}
-        />
+        <Section title="Text" icon={<TypeIcon className="size-4" />}>
+          <TypographySection
+            qcFontSize={props.qcFontSize}
+            setQcFontSize={props.setQcFontSize}
+            qcFontSizeUnit={props.qcFontSizeUnit}
+            setQcFontSizeUnit={props.setQcFontSizeUnit}
+            qcFontWeight={props.qcFontWeight}
+            setQcFontWeight={props.setQcFontWeight}
+            qcTextAlign={props.qcTextAlign}
+            setQcTextAlign={props.setQcTextAlign}
+            applyInlineStyle={props.applyInlineStyle}
+            debouncedApplyInlineStyle={debouncedApplyInlineStyle}
+          />
+        </Section>
 
-        <InlineStylesSection
-          inlineStyles={props.inlineStyles}
-          setInlineStyles={props.setInlineStyles}
-          newProp={props.newProp}
-          setNewProp={props.setNewProp}
-          newVal={props.newVal}
-          setNewVal={props.setNewVal}
-          applyInlineStyle={props.applyInlineStyle}
-        />
+        <Section title="Inline CSS" icon={<Code2 className="size-4" />}>
+          <InlineStylesSection
+            inlineStyles={props.inlineStyles}
+            setInlineStyles={props.setInlineStyles}
+            newProp={props.newProp}
+            setNewProp={props.setNewProp}
+            newVal={props.newVal}
+            setNewVal={props.setNewVal}
+            applyInlineStyle={props.applyInlineStyle}
+          />
+        </Section>
 
-        <MediaQueriesSection
-          mqMinWidth={props.mqMinWidth}
-          setMqMinWidth={props.setMqMinWidth}
-          mqProp={props.mqProp}
-          setMqProp={props.setMqProp}
-          mqVal={props.mqVal}
-          setMqVal={props.setMqVal}
-          mqRules={props.mqRules}
-          onAddMqProp={props.onAddMqProp}
-          onDeleteMqProp={props.onDeleteMqProp}
-        />
+        <Section title="Media Queries" icon={<MonitorSmartphone className="size-4" />}>
+          <MediaQueriesSection
+            mqMinWidth={props.mqMinWidth}
+            setMqMinWidth={props.setMqMinWidth}
+            mqProp={props.mqProp}
+            setMqProp={props.setMqProp}
+            mqVal={props.mqVal}
+            setMqVal={props.setMqVal}
+            mqRules={props.mqRules}
+            onAddMqProp={props.onAddMqProp}
+            onDeleteMqProp={props.onDeleteMqProp}
+          />
+        </Section>
 
-        <ComputedStylesSection
-          computedCollapsed={props.computedCollapsed}
-          setComputedCollapsed={props.setComputedCollapsed}
-          computedStyles={props.computedStyles}
-        />
+        <Section title="Computed Styles" icon={<List className="size-4" />}>
+          <ComputedStylesSection
+            computedCollapsed={props.computedCollapsed}
+            setComputedCollapsed={props.setComputedCollapsed}
+            computedStyles={props.computedStyles}
+          />
+        </Section>
       </div>
     </div>
   );

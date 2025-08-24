@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "@radix-ui/react-slot": "^1.2.3",
     "@types/dompurify": "^3.0.5",
+    "class-variance-authority": "^0.7.1",
     "dompurify": "^3.2.6",
     "html-react-parser": "^5.2.6",
     "lucide-react": "^0.541.0",

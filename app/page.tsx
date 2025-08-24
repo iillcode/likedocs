@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import MonacoEditor from "../components/MonacoEditor";
+import { HeroSection } from "@/components/blocks/hero-section-9";
 
 function generateId() {
   try {
@@ -27,8 +28,14 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
-      <MonacoEditor onCodeSubmit={handleCodeSubmit} initialCode={htmlCode} />
+    <div className="min-h-screen bg-black text-white">
+      <HeroSection>
+        <MonacoEditor
+          embedded
+          onCodeSubmit={handleCodeSubmit}
+          initialCode={htmlCode}
+        />
+      </HeroSection>
     </div>
   );
 }

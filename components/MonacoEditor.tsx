@@ -6,11 +6,13 @@ import Editor from "@monaco-editor/react";
 interface MonacoEditorProps {
   onCodeSubmit: (code: string) => void;
   initialCode?: string;
+  embedded?: boolean;
 }
 
 const MonacoEditor: React.FC<MonacoEditorProps> = ({
   onCodeSubmit,
   initialCode = "",
+  embedded = false,
 }) => {
   const [code, setCode] = useState(initialCode);
   const [error, setError] = useState<string>("");
@@ -406,42 +408,67 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
   };
 
   return (
-    <div className="flex flex-col items-center min-h-screen p-6 sm:p-8">
-      <div className="w-full max-w-6xl">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 mb-3">
-            LikeDocs Portfolio Builder
-          </h1>
-          <p className="text-base sm:text-lg text-gray-600 dark:text-gray-300">
-            Paste any HTML (with CSS/JS) and preview it in full screen
-          </p>
-
-          <div className="mt-5 flex items-center justify-center gap-3">
-            <button
-              onClick={handleUseTemplate}
-              className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-md"
-            >
-              Use Sample Template
-            </button>
-            <button
-              onClick={handleSubmit}
-              className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-md"
-            >
-              Preview Portfolio
-            </button>
+    <div
+      className={
+        embedded
+          ? "h-full w-full p-0"
+          : "flex flex-col items-center min-h-screen p-6 sm:p-8"
+      }
+    >
+      <div className={embedded ? "w-full h-full" : "w-full max-w-6xl"}>
+        {/* Optional banner (hidden in embedded mode) */}
+        {!embedded && (
+          <div className="mb-8 text-center">
+            <h1 className="mb-3 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent">
+              LikeDocs Portfolio Builder
+            </h1>
+            <p className="text-base text-gray-600 dark:text-gray-300 sm:text-lg">
+              Paste any HTML (with CSS/JS) and preview it in full screen
+            </p>
+            <div className="mt-5 flex items-center justify-center gap-3">
+              <button
+                onClick={handleUseTemplate}
+                className="rounded-md border border-white/15 bg-white/10 px-4 py-2 text-white shadow-sm transition hover:bg-white/20"
+              >
+                Use Sample Template
+              </button>
+              <button
+                onClick={handleSubmit}
+                className="rounded-md bg-white px-4 py-2 text-black shadow-sm transition hover:bg-zinc-200"
+              >
+                Preview Portfolio
+              </button>
+            </div>
           </div>
-        </div>
-
+        )}
         {/* Monaco Editor */}
-        <div className="rounded-xl border border-black/5 dark:border-white/10 overflow-hidden shadow-xl bg-white/80 dark:bg-gray-900/70 backdrop-blur">
-          <div className="p-4 bg-gray-50 dark:bg-gray-800/70 border-b border-black/5 dark:border-white/10">
-            <h3 className="text-sm font-semibold tracking-wide text-gray-700 dark:text-gray-200">
+        <div
+          className={
+            embedded
+              ? "flex h-full flex-col overflow-hidden rounded-xl border border-white/10 bg-black/60 shadow-xl backdrop-blur"
+              : "overflow-hidden rounded-xl border border-black/5 bg-white/80 shadow-xl backdrop-blur dark:border-white/10 dark:bg-gray-900/70"
+          }
+        >
+          <div className="flex items-center justify-between border-b border-white/10 bg-zinc-900/80 p-3">
+            <h3 className="text-sm font-semibold tracking-wide text-gray-200">
               HTML Editor
             </h3>
+            <div className="flex gap-2">
+              <button
+                onClick={handleUseTemplate}
+                className="rounded-md border border-white/15 bg-white/10 px-3 py-1.5 text-xs text-white transition hover:bg-white/20"
+              >
+                Use Sample Template
+              </button>
+              <button
+                onClick={handleSubmit}
+                className="rounded-md bg-white px-3 py-1.5 text-xs text-black transition hover:bg-zinc-200"
+              >
+                Preview Portfolio
+              </button>
+            </div>
           </div>
-
-          <div className="h-[70vh]">
+          <div className={embedded ? "flex-1" : "h-[70vh]"}>
             <Editor
               height="100%"
               defaultLanguage="html"
@@ -459,26 +486,26 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
             />
           </div>
         </div>
-
         {/* Error Message */}
-        {error && (
+        {!embedded && error && (
           <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 rounded-lg">
             {error}
           </div>
         )}
-
         {/* Tips */}
-        <div className="mt-6 grid gap-3 sm:grid-cols-3 text-sm text-gray-600 dark:text-gray-400">
-          <div className="rounded-lg border border-black/5 dark:border-white/10 p-3">
-            • Supports full HTML documents with inline CSS and JS
+        {!embedded && (
+          <div className="mt-6 grid gap-3 text-sm text-gray-600 dark:text-gray-400 sm:grid-cols-3">
+            <div className="rounded-lg border border-black/5 p-3 dark:border-white/10">
+              • Supports full HTML documents with inline CSS and JS
+            </div>
+            <div className="rounded-lg border border-black/5 p-3 dark:border-white/10">
+              • Preview runs in a sandboxed iframe for safety
+            </div>
+            <div className="rounded-lg border border-black/5 p-3 dark:border-white/10">
+              • You can edit text directly in the preview
+            </div>
           </div>
-          <div className="rounded-lg border border-black/5 dark:border-white/10 p-3">
-            • Preview runs in a sandboxed iframe for safety
-          </div>
-          <div className="rounded-lg border border-black/5 dark:border-white/10 p-3">
-            • You can edit text directly in the preview
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
